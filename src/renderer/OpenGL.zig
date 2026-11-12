@@ -2,6 +2,7 @@
 pub const OpenGL = @This();
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const gl = @import("opengl");
 const egl = gl.egl;
@@ -11,8 +12,14 @@ const font = @import("../font/main.zig");
 const configpkg = @import("../config.zig");
 const rendererpkg = @import("../renderer.zig");
 const Renderer = rendererpkg.GenericRenderer(OpenGL);
-const Dmabuf = @import("Dmabuf.zig");
 pub const Device = @import("opengl/Device.zig");
+const wgl = @import("opengl/wgl.zig");
+
+const is_windows = builtin.target.os.tag == .windows;
+
+const Dmabuf = if (is_windows) struct {
+    pub fn deinit(_: @This()) void {}
+} else @import("Dmabuf.zig");
 
 pub const GraphicsAPI = OpenGL;
 pub const Target = @import("opengl/Target.zig");
@@ -47,13 +54,28 @@ blending: configpkg.Config.AlphaBlending,
 /// The shared render device.
 device: *const Device,
 
-egl_context: *gl.egl.Context,
+provider: Provider,
+
+const Provider = if (is_windows) wgl.Context else struct {
+    egl_display: *gl.egl.Display,
+    egl_context: *gl.egl.Context,
+};
 
 pub fn init(
     alloc: Allocator,
     device: *const Device,
     opts: rendererpkg.Options,
 ) !OpenGL {
+    if (comptime is_windows) {
+        const hwnd = opts.rt_surface.hwnd orelse return error.SurfaceNotRealized;
+        return .{
+            .alloc = alloc,
+            .blending = opts.config.blending,
+            .device = device,
+            .provider = try wgl.Context.init(hwnd, opts.config.vsync),
+        };
+    }
+
     const display = device.display;
 
     // Bind to OpenGL API explicitly before we create the context,
@@ -85,13 +107,22 @@ pub fn init(
         .alloc = alloc,
         .blending = opts.config.blending,
         .device = device,
-        .egl_context = context,
+        .provider = .{
+            .egl_display = display,
+            .egl_context = context,
+        },
     };
 }
 
 pub fn deinit(self: *OpenGL) void {
-    self.device.display.releaseCurrent();
-    self.egl_context.destroy(self.device.display) catch {};
+    if (comptime is_windows) {
+        self.provider.deinit();
+        self.* = undefined;
+        return;
+    }
+
+    self.provider.egl_display.releaseCurrent();
+    self.provider.egl_context.destroy(self.provider.egl_display) catch {};
     self.* = undefined;
 }
 
@@ -200,7 +231,13 @@ fn prepareContext(getProcAddress: anytype) !void {
 /// function pointers so all subsequent GL work on this thread is valid.
 pub fn threadEnter(self: *OpenGL, surface: *apprt.Surface) !void {
     _ = surface;
-    try self.device.display.makeCurrent(null, null, self.egl_context);
+    if (comptime is_windows) {
+        try self.provider.makeCurrent();
+        try prepareContext(&wgl.getProcAddress);
+        return;
+    }
+
+    try self.provider.egl_display.makeCurrent(null, null, self.provider.egl_context);
     // Load our function pointers for this thread's threadlocal.
     try prepareContext(&gl.egl.getProcAddress);
 }
@@ -209,7 +246,13 @@ pub fn threadEnter(self: *OpenGL, surface: *apprt.Surface) !void {
 /// thread; unbinds the context from this thread so it can be destroyed on
 /// the main thread.
 pub fn threadExit(self: *OpenGL) void {
-    self.device.display.releaseCurrent();
+    if (comptime is_windows) {
+        wgl.Context.releaseCurrent();
+        gl.glad.unload();
+        return;
+    }
+
+    self.provider.egl_display.releaseCurrent();
     gl.glad.unload();
 }
 
@@ -278,11 +321,16 @@ pub fn present(
     self: *OpenGL,
     target: Target,
     presentation_health: rendererpkg.Health,
-) !ExportedFrame {
+) !?ExportedFrame {
+    if (comptime is_windows) {
+        try presentWindow(self, target);
+        return null;
+    }
+
     // We only export DMABUFs when the apprt can present them.
     // Otherwise, use CPU buffers.
     if (presentation_health == .healthy) {
-        if (target.exportDmabuf(self.device.display, self.egl_context)) |dmabuf| {
+        if (target.exportDmabuf(self.provider.egl_display, self.provider.egl_context)) |dmabuf| {
             return .{ .dmabuf = dmabuf };
         } else |_| {
             log.warn("failed to export DMABUF, falling back to CPU presentation", .{});
@@ -295,6 +343,35 @@ pub fn present(
         .pixels = try target.readPixelsAlloc(self.alloc),
         .alloc = self.alloc,
     } };
+}
+
+fn presentWindow(self: *OpenGL, target: Target) !void {
+    try gl.disable(gl.c.GL_FRAMEBUFFER_SRGB);
+    defer gl.enable(gl.c.GL_FRAMEBUFFER_SRGB) catch |err| {
+        log.err("Error re-enabling GL_FRAMEBUFFER_SRGB, err={}", .{err});
+    };
+
+    const read_bind = try target.framebuffer.bind(.read);
+    defer read_bind.unbind();
+
+    const window_fbo: gl.Framebuffer = .{ .id = 0 };
+    const draw_bind = try window_fbo.bind(.draw);
+    defer draw_bind.unbind();
+
+    try gl.blitFramebuffer(
+        0,
+        0,
+        @intCast(target.width),
+        @intCast(target.height),
+        0,
+        0,
+        @intCast(target.width),
+        @intCast(target.height),
+        .{ .color_buffer_bit = true },
+        .nearest,
+    );
+
+    try self.provider.swapBuffers(@intCast(target.width), @intCast(target.height));
 }
 
 /// A finished frame exported for presentation by the apprt.
@@ -446,4 +523,8 @@ pub inline fn beginFrame(
 ) !Frame {
     _ = self;
     return try Frame.begin(.{}, renderer, target);
+}
+
+test {
+    if (comptime is_windows) _ = wgl;
 }

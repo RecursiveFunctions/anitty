@@ -21,6 +21,11 @@ pub const std_options: std.Options = if (@hasDecl(entrypoint, "std_options"))
 else
     .{};
 
+pub const panic = if (@hasDecl(entrypoint, "panic"))
+    entrypoint.panic
+else
+    std.debug.FullPanic(std.debug.defaultPanic);
+
 comptime {
     // Force-reference our memset override so its export is emitted
     // when its needed. See quirks_memset.zig for lots of details.

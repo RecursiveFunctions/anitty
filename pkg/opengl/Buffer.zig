@@ -111,7 +111,7 @@ pub const Binding = struct {
     }
 
     fn dataInfo(data: anytype) struct {
-        size: isize,
+        size: c.GLsizeiptr,
         ptr: *const anyopaque,
     } {
         return switch (@typeInfo(@TypeOf(data))) {

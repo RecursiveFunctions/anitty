@@ -22,9 +22,33 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $Prefix = (Resolve-Path $Prefix).Path
 $exe = Join-Path $Prefix "bin\ghostty.exe"
 
+$themesDir = Join-Path $Prefix "share\ghostty\themes"
+if (-not (Test-Path $themesDir)) {
+    $zon = Get-Content (Join-Path $repoRoot "build.zig.zon") -Raw
+    if ($zon -notmatch '\.iterm2_themes\s*=\s*\.\{[^}]*\.url\s*=\s*"([^"]+)"') {
+        throw "could not find the iTerm2 themes URL in build.zig.zon"
+    }
+    $themesUrl = $Matches[1]
+    $themesTgz = Join-Path $env:TEMP "ghostty-themes.tgz"
+    Write-Output "fetching themes: $themesUrl"
+    Invoke-WebRequest -UseBasicParsing -OutFile $themesTgz $themesUrl
+    New-Item -ItemType Directory -Force $themesDir | Out-Null
+    tar -xzf $themesTgz -C $themesDir --strip-components=2
+    if ($LASTEXITCODE -ne 0) { throw "could not extract $themesTgz" }
+
+    # Windows does not permit colons in file names. Keep all themes by
+    # changing only that character after tar writes the POSIX names.
+    Get-ChildItem $themesDir -File | ForEach-Object {
+        $safeName = $_.Name -replace '[:<>"/\\|?*]', ' -'
+        if ($safeName -ne $_.Name) {
+            Rename-Item -LiteralPath $_.FullName -NewName $safeName
+        }
+    }
+}
+
 $required = @(
     $exe,
-    (Join-Path $Prefix "share\ghostty\themes"),
+    $themesDir,
     (Join-Path $Prefix "share\ghostty\shell-integration"),
     (Join-Path $Prefix "share\terminfo\ghostty.terminfo")
 )

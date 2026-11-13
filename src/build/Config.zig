@@ -607,7 +607,11 @@ pub fn init(b: *std.Build, versions: Versions) !Config {
         "emit-themes",
         "Install bundled iTerm2-Color-Schemes Ghostty themes",
     ) orelse switch (target.result.os.tag) {
-        .windows => config.app_runtime != .none,
+        // The upstream themes tarball includes filenames with colons
+        // (e.g. "Neon Raincheck: After Hours"), which are invalid on
+        // Windows filesystems and cause Zig's tarball unpacker to fail.
+        // make-zip.ps1 unpacks and sanitizes the themes archive on Windows.
+        .windows => false,
         else => true,
     };
 

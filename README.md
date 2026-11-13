@@ -9,7 +9,7 @@
     <br />
     OpenGL 4.3 · DirectWrite · ConPTY · Native Win32 (`-Dapp-runtime=win32`)
     <br />
-    <a href="https://github.com/RecursiveFunctions/ghostty/releases">Releases</a>
+    <a href="https://github.com/RecursiveFunctions/ghostty-windows/releases">Releases</a>
     ·
     <a href="#installation">Installation</a>
     ·
@@ -24,11 +24,11 @@
 </p>
 
 > [!IMPORTANT]
-> **Unofficial Community Windows Port (`RecursiveFunctions/ghostty`)**
+> **Unofficial Community Windows Port (`RecursiveFunctions/ghostty-windows`)**
 >
 > This repository maintains an experimental, community-driven Windows port (`-Dapp-runtime=win32`) and is **not** an official [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) release.
 >
-> - **Bug Reports:** Report all Windows-specific issues and crash reports to [`RecursiveFunctions/ghostty/issues`](https://github.com/RecursiveFunctions/ghostty/issues). **Never** report issues from this fork to upstream `ghostty-org/ghostty`.
+> - **Bug Reports:** Report all Windows-specific issues and crash reports to [`RecursiveFunctions/ghostty-windows/issues`](https://github.com/RecursiveFunctions/ghostty-windows/issues). **Never** report issues from this fork to upstream `ghostty-org/ghostty`.
 > - **Windows Documentation & AI Disclosure:** See [`dist/windows/README-windows.md`](dist/windows/README-windows.md) for detailed Windows setup, troubleshooting, provenance, and AI assistance disclosure (in accordance with [`AI_POLICY.md`](AI_POLICY.md)).
 
 ## Overview
@@ -47,7 +47,7 @@ Ghostty for Windows brings [Ghostty](https://github.com/ghostty-org/ghostty)'s h
 
 ## Installation
 
-For Windows builds, see the [**Releases page**](https://github.com/RecursiveFunctions/ghostty/releases) on this repository (for official macOS/Linux builds, see [ghostty.org/download](https://ghostty.org/download)).
+For Windows builds, see the [**Releases page**](https://github.com/RecursiveFunctions/ghostty-windows/releases) on this repository (for official macOS/Linux builds, see [ghostty.org/download](https://ghostty.org/download)).
 
 ### Installer (Recommended)
 
@@ -178,7 +178,7 @@ ISCC.exe /DAppVersion=1.4.1-windows /DSourceDir=dist\windows\out\staging\ghostty
 
 ## Contributing & Developing
 
-If you would like to contribute to this Windows fork, open an [issue](https://github.com/RecursiveFunctions/ghostty/issues) or [discussion](https://github.com/RecursiveFunctions/ghostty/discussions) on this repository.
+If you would like to contribute to this Windows fork, open an [issue](https://github.com/RecursiveFunctions/ghostty-windows/issues) or [discussion](https://github.com/RecursiveFunctions/ghostty-windows/discussions) on this repository.
 
 For upstream Ghostty architecture and contribution guidelines, see [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`HACKING.md`](HACKING.md).
 

@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 >
-> This is an **unofficial community build** maintained at [`RecursiveFunctions/ghostty`](https://github.com/RecursiveFunctions/ghostty). Report all Windows issues and crash reports to [`RecursiveFunctions/ghostty/issues`](https://github.com/RecursiveFunctions/ghostty/issues) — **never** to upstream `ghostty-org/ghostty`.
+> This is an **unofficial community build** maintained at [`RecursiveFunctions/ghostty-windows`](https://github.com/RecursiveFunctions/ghostty-windows). Report all Windows issues and crash reports to [`RecursiveFunctions/ghostty-windows/issues`](https://github.com/RecursiveFunctions/ghostty-windows/issues) — **never** to upstream `ghostty-org/ghostty`.
 
 Ghostty on Windows is a native Win32 application (`-Dapp-runtime=win32`)
 that renders with OpenGL and runs shells through ConPTY. It is

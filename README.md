@@ -26,7 +26,7 @@
 >
 > This repository maintains an experimental, community-driven Windows port (`-Dapp-runtime=win32`) and is **not** an official [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) release.
 >
-> - **Bug Reports:** Report all Windows-specific issues to [`RecursiveFunctions/ghostty/issues`](https://github.com/RecursiveFunctions/ghostty/issues). **Never** report issues from this fork to `ghostty-org/ghostty`.
+> - **Bug Reports:** Report all Windows-specific issues to [`RecursiveFunctions/ghostty/issues`](https://github.com/RecursiveFunctions/ghostty/issues). 
 > - **Windows Documentation & AI Disclosure:** See [`dist/windows/README-windows.md`](dist/windows/README-windows.md) for Windows installation, supported features, provenance, and AI assistance disclosure (in accordance with [`AI_POLICY.md`](AI_POLICY.md)).
 
 ## About
@@ -47,17 +47,19 @@ for smaller examples of using `libghostty` in C and Zig.
 For more details, see [About Ghostty](https://ghostty.org/docs/about).
 
 ## Download
-
-See the [download page](https://ghostty.org/download) on the Ghostty website.
+For the windows build, see the [releases page](https://github.com/RecursiveFunctions/ghostty/releases/tag/windows-v1.4.1-windows.bfb3e8b) on this repo.
+For all the official upstream stuff, see the [download page](https://ghostty.org/download) on the Ghostty website.
 
 ## Documentation
 
 See the [documentation](https://ghostty.org/docs) on the Ghostty website.
 
 ## Contributing and Developing
+If you'd like to contribute to this fork for the windows stuff, simply open
+an issue or discussion. 
 
 If you have any ideas, issues, etc. regarding Ghostty, or would like to
-contribute to Ghostty through pull requests, please check out our
+contribute to Ghostty through pull requests, please check out the upstream
 ["Contributing to Ghostty"](CONTRIBUTING.md) document. Those who would like
 to get involved with Ghostty's development as well should also read the
 ["Developing Ghostty"](HACKING.md) document for more technical details.

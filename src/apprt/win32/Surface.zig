@@ -13,6 +13,9 @@ const clipboard = @import("clipboard.zig");
 const key = @import("key.zig");
 const dialogs = @import("dialogs.zig");
 const ime = @import("ime.zig");
+const SearchOverlay = @import("SearchOverlay.zig");
+const SurfaceOverlay = @import("SurfaceOverlay.zig");
+const InspectorWindow = @import("InspectorWindow.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -26,6 +29,13 @@ content_scale: apprt.ContentScale = .{ .x = 1, .y = 1 },
 cursor_pos: apprt.CursorPos = .{ .x = -1, .y = -1 },
 title: ?[:0]const u8 = null,
 title_override: ?[:0]const u8 = null,
+pwd_path: ?[:0]const u8 = null,
+hover_url: ?[:0]const u8 = null,
+bell_ringing: bool = false,
+cell_size: apprt.action.CellSize = .{ .width = 0, .height = 0 },
+search_overlay: SearchOverlay = .{},
+overlay: SurfaceOverlay = .{},
+inspector_window: ?*InspectorWindow = null,
 key_utf8: [32]u8 = undefined,
 sys_char_passthrough: bool = false,
 dead_key_pending: bool = false,
@@ -63,7 +73,7 @@ pub fn create(
         0,
         App.surface_class_name,
         null,
-        c.WS_CHILD | c.WS_VISIBLE | c.WS_CLIPSIBLINGS,
+        c.WS_CHILD | c.WS_VISIBLE | c.WS_CLIPSIBLINGS | c.WS_CLIPCHILDREN,
         rect.left,
         rect.top,
         rect.right - rect.left,
@@ -77,6 +87,9 @@ pub fn create(
         _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, 0);
         _ = c.DestroyWindow(hwnd);
     }
+
+    try self.overlay.create(hwnd, app.instance);
+    try self.search_overlay.create(hwnd, app.instance);
 
     self.updateSize();
     self.updateContentScale();
@@ -123,6 +136,7 @@ pub fn destroy(self: *Surface) void {
     const alloc = self.app.core_app.alloc;
     log.debug("surface destroy", .{});
 
+    if (self.inspector_window) |insp| insp.destroy();
     self.deinit();
 
     if (self.hwnd) |hwnd| {
@@ -131,8 +145,11 @@ pub fn destroy(self: *Surface) void {
         _ = c.DestroyWindow(hwnd);
     }
 
+    self.overlay.deinit(alloc);
     if (self.title) |v| alloc.free(v);
     if (self.title_override) |v| alloc.free(v);
+    if (self.pwd_path) |v| alloc.free(v);
+    if (self.hover_url) |v| alloc.free(v);
     alloc.destroy(self);
 }
 
@@ -185,6 +202,45 @@ pub fn setTitleOverride(self: *Surface, title: [:0]const u8) !void {
     if (self.title_override) |v| alloc.free(v);
     self.title_override = copy;
     self.window.surfaceTitleChanged(self);
+}
+
+pub fn copyTitleToClipboard(self: *Surface) bool {
+    const title = self.getEffectiveTitle() orelse return false;
+    if (title.len == 0) return false;
+    clipboard.writeText(self.app.core_app.alloc, self.hwnd, title) catch |err| {
+        log.warn("error copying title to clipboard err={}", .{err});
+        return false;
+    };
+    return true;
+}
+
+pub fn setPwd(self: *Surface, pwd: [:0]const u8) !void {
+    const alloc = self.app.core_app.alloc;
+    const copy: ?[:0]const u8 = if (pwd.len == 0) null else try alloc.dupeSentinel(u8, pwd, 0);
+    if (self.pwd_path) |v| alloc.free(v);
+    self.pwd_path = copy;
+}
+
+pub fn getPwd(self: *const Surface) ?[:0]const u8 {
+    return self.pwd_path;
+}
+
+pub fn setMouseOverLink(self: *Surface, url: []const u8) !void {
+    const alloc = self.app.core_app.alloc;
+    const copy: ?[:0]const u8 = if (url.len == 0) null else try alloc.dupeSentinel(u8, url, 0);
+    if (self.hover_url) |v| alloc.free(v);
+    self.hover_url = copy;
+    self.overlay.refreshPill();
+}
+
+pub fn setCellSize(self: *Surface, width: u32, height: u32) void {
+    self.cell_size = .{ .width = width, .height = height };
+}
+
+pub fn setBellRinging(self: *Surface, ringing: bool) void {
+    if (self.bell_ringing == ringing) return;
+    self.bell_ringing = ringing;
+    self.window.surfaceBellChanged(self);
 }
 
 pub fn getContentScale(self: *const Surface) !apprt.ContentScale {
@@ -263,6 +319,7 @@ pub fn waitPresented(self: *Surface, timeout_ms: u32) bool {
 
 fn focusChanged(self: *Surface, focused: bool) void {
     self.focused = focused;
+    if (focused) self.setBellRinging(false);
     const hwnd = self.hwnd orelse return;
     _ = c.PostMessageW(hwnd, WM_GHOSTTY_FOCUS, 0, 0);
 }
@@ -326,6 +383,7 @@ fn mouseMove(self: *Surface, wparam: c.WPARAM, lparam: c.LPARAM) void {
     const pos: apprt.CursorPos = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
     if (pos.x == self.cursor_pos.x and pos.y == self.cursor_pos.y) return;
     self.cursor_pos = pos;
+    if (self.overlay.pill_len > 0) self.overlay.refreshPill();
     if (!self.initialized) return;
     self.core_surface.cursorPosCallback(pos, mouseMods(wparam)) catch |err| {
         log.warn("error in cursor pos callback err={}", .{err});
@@ -353,7 +411,7 @@ fn mouseButton(
     if (state == .press and button == .left) _ = c.SetFocus(hwnd);
     self.mouseMove(wparam, lparam);
 
-    const bit = @as(u16, 1) << @intCast(@intFromEnum(button));
+    const bit = @as(u16, 1) << @intCast(@backingInt(button));
     switch (state) {
         .press => {
             if (self.mouse_buttons == 0) _ = c.SetCapture(hwnd);
@@ -383,7 +441,7 @@ fn captureLost(self: *Surface) void {
     if (c.GetKeyState(c.VK_CONTROL) < 0) wparam |= c.MK_CONTROL;
     const mods = mouseMods(wparam);
     for (std.enums.values(input.MouseButton)) |button| {
-        const bit = @as(u16, 1) << @intCast(@intFromEnum(button));
+        const bit = @as(u16, 1) << @intCast(@backingInt(button));
         if (buttons & bit == 0) continue;
         _ = self.core_surface.mouseButtonCallback(.release, button, mods) catch |err| {
             log.warn("error in mouse button callback err={}", .{err});
@@ -648,6 +706,7 @@ fn keyMessage(
     switch (effect) {
         .closed, .consumed => return 0,
         .ignored => {
+            if (self.app.core_app.keyEvent(self.app, event)) return 0;
             if (!sys_down) return 0;
             self.sys_char_passthrough = true;
             const translate_msg: c.MSG = .{
@@ -730,6 +789,8 @@ pub fn wndProc(
     switch (msg) {
         c.WM_SIZE => {
             self.size = .{ .width = c.loword(lparam), .height = c.hiword(lparam) };
+            self.overlay.layout();
+            self.search_overlay.layout();
             if (self.initialized and self.size.width > 0 and self.size.height > 0) {
                 self.core_surface.sizeCallback(self.size) catch |err| {
                     log.warn("error in size callback err={}", .{err});
@@ -740,6 +801,8 @@ pub fn wndProc(
 
         c.WM_DPICHANGED_AFTERPARENT => {
             self.dpiChanged(c.GetDpiForWindow(hwnd));
+            self.overlay.updateFont();
+            self.search_overlay.updateFont();
             return 0;
         },
 

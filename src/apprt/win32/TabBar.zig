@@ -294,15 +294,20 @@ fn drawTab(self: *TabBar, hdc: c.HDC, palette: Palette, layout: Layout, i: usize
         .bottom = r.bottom,
     };
     _ = c.SetTextColor(hdc, if (active) palette.text else palette.text_inactive);
-    if (std.unicode.utf8ToUtf16LeAlloc(alloc, win.tabTitle(i))) |wide| {
-        defer alloc.free(wide);
-        _ = c.DrawTextW(
-            hdc,
-            wide.ptr,
-            @intCast(wide.len),
-            &text_rect,
-            c.DT_SINGLELINE | c.DT_VCENTER | c.DT_NOPREFIX | c.DT_END_ELLIPSIS,
-        );
+    const raw_title = win.tabTitle(i);
+    const bell_prefix: []const u8 = if (win.app.config.@"bell-features".title and win.tabHasBell(i)) "\u{1F514} " else "";
+    if (std.mem.concat(alloc, u8, &.{ bell_prefix, raw_title })) |full_title| {
+        defer alloc.free(full_title);
+        if (std.unicode.utf8ToUtf16LeAlloc(alloc, full_title)) |wide| {
+            defer alloc.free(wide);
+            _ = c.DrawTextW(
+                hdc,
+                wide.ptr,
+                @intCast(wide.len),
+                &text_rect,
+                c.DT_SINGLELINE | c.DT_VCENTER | c.DT_NOPREFIX | c.DT_END_ELLIPSIS,
+            );
+        } else |_| {}
     } else |_| {}
 
     if (active or hovered) {

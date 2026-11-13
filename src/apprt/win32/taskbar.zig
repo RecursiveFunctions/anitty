@@ -215,7 +215,7 @@ pub fn commandFinished(window: *Window, value: apprt.Action.Value(.command_finis
 
     const action = config.@"notify-on-command-finish-action";
     log.debug("command finished exit_code={?d} bell={} notify={}", .{ value.exit_code, action.bell, action.notify });
-    if (action.bell) window.ringBell();
+    if (action.bell) window.ringBell(window.activeSurface());
     if (action.notify) {
         const title: []const u8 = if (value.exit_code) |code|
             if (code == 0) "Command Succeeded" else "Command Failed"

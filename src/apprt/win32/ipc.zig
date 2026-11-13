@@ -70,7 +70,7 @@ pub fn encode(alloc: Allocator, request: Request) Allocator.Error![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(alloc);
     try buf.appendSlice(alloc, magic);
-    try buf.append(alloc, @intFromEnum(request.kind));
+    try buf.append(alloc, @backingInt(request.kind));
     try buf.append(alloc, @intFromBool(request.arguments != null));
     try appendInt(alloc, &buf, u64, request.surface_id);
     const args = request.arguments orelse &.{};
@@ -303,13 +303,13 @@ pub const Server = struct {
         defer self.overrides = null;
 
         log.info("ipc request kind={t} surface_id={x}", .{ request.kind, request.surface_id });
+        const target = if (request.surface_id != 0)
+            app.core_app.findSurfaceByID(request.surface_id)
+        else
+            null;
         const window: *Window = switch (request.kind) {
-            .new_window => try Window.create(app),
+            .new_window => try Window.create(app, target),
             .new_tab => tab: {
-                const target = if (request.surface_id != 0)
-                    app.core_app.findSurfaceByID(request.surface_id)
-                else
-                    null;
                 if (target) |core| {
                     core.rt_surface.window.newTab(core);
                     break :tab core.rt_surface.window;
@@ -318,7 +318,7 @@ pub const Server = struct {
                     w.newTab(null);
                     break :tab w;
                 }
-                break :tab try Window.create(app);
+                break :tab try Window.create(app, null);
             },
         };
         if (window.hwnd) |hwnd| {

@@ -87,6 +87,111 @@ extern "user32" fn GetWindowTextW(hwnd: c.HWND, buf: [*]u16, max: c_int) callcon
 extern "user32" fn GetWindow(hwnd: c.HWND, cmd: c.UINT) callconv(.winapi) ?c.HWND;
 extern "shell32" fn ShellExecuteW(hwnd: ?c.HWND, op: ?c.LPCWSTR, file: c.LPCWSTR, params: ?c.LPCWSTR, dir: ?c.LPCWSTR, show: c_int) callconv(.winapi) ?c.HINSTANCE;
 extern "shell32" fn FindExecutableW(file: c.LPCWSTR, dir: ?c.LPCWSTR, result: [*]u16) callconv(.winapi) ?c.HINSTANCE;
+extern "ole32" fn CoCreateInstance(rclsid: *const std.os.windows.GUID, outer: ?*anyopaque, clsctx: c.DWORD, riid: *const std.os.windows.GUID, ppv: *?*anyopaque) callconv(.winapi) c.HRESULT;
+extern "ole32" fn CoTaskMemFree(pv: ?*anyopaque) callconv(.winapi) void;
+
+const CLSCTX_INPROC_SERVER: c.DWORD = 0x1;
+const CLSCTX_INPROC_HANDLER: c.DWORD = 0x2;
+const CLSCTX_LOCAL_SERVER: c.DWORD = 0x4;
+const SIGDN_FILESYSPATH: c.DWORD = 0x80058000;
+
+const CLSID_FileSaveDialog: std.os.windows.GUID = .{
+    .Data1 = 0xC0B4E2F3,
+    .Data2 = 0xBA21,
+    .Data3 = 0x4773,
+    .Data4 = .{ 0x8D, 0xBA, 0x33, 0x5E, 0xC9, 0x46, 0xEB, 0x8B },
+};
+
+const IID_IFileDialog: std.os.windows.GUID = .{
+    .Data1 = 0x42F85136,
+    .Data2 = 0xDB7E,
+    .Data3 = 0x439C,
+    .Data4 = .{ 0x85, 0xF1, 0xE4, 0x07, 0x5D, 0x13, 0x5F, 0xC8 },
+};
+
+const IShellItem = extern struct {
+    lpVtbl: *const Vtbl,
+
+    const Vtbl = extern struct {
+        QueryInterface: *const anyopaque,
+        AddRef: *const anyopaque,
+        Release: *const fn (*IShellItem) callconv(.winapi) u32,
+        BindToHandler: *const anyopaque,
+        GetParent: *const anyopaque,
+        GetDisplayName: *const fn (*IShellItem, c.DWORD, *?[*:0]u16) callconv(.winapi) c.HRESULT,
+    };
+};
+
+const IFileDialog = extern struct {
+    lpVtbl: *const Vtbl,
+
+    const Vtbl = extern struct {
+        QueryInterface: *const anyopaque,
+        AddRef: *const anyopaque,
+        Release: *const fn (*IFileDialog) callconv(.winapi) u32,
+        Show: *const fn (*IFileDialog, ?c.HWND) callconv(.winapi) c.HRESULT,
+        SetFileTypes: *const anyopaque,
+        SetFileTypeIndex: *const anyopaque,
+        GetFileTypeIndex: *const anyopaque,
+        Advise: *const anyopaque,
+        Unadvise: *const anyopaque,
+        SetOptions: *const anyopaque,
+        GetOptions: *const anyopaque,
+        SetDefaultFolder: *const anyopaque,
+        SetFolder: *const anyopaque,
+        GetFolder: *const anyopaque,
+        GetCurrentSelection: *const anyopaque,
+        SetFileName: *const fn (*IFileDialog, c.LPCWSTR) callconv(.winapi) c.HRESULT,
+        GetFileName: *const anyopaque,
+        SetTitle: *const fn (*IFileDialog, c.LPCWSTR) callconv(.winapi) c.HRESULT,
+        SetOkButtonLabel: *const anyopaque,
+        SetFileNameLabel: *const anyopaque,
+        GetResult: *const fn (*IFileDialog, *?*IShellItem) callconv(.winapi) c.HRESULT,
+    };
+};
+
+const CLSID_UIHostNoLaunch: std.os.windows.GUID = .{
+    .Data1 = 0x4CE576FA,
+    .Data2 = 0x83DC,
+    .Data3 = 0x4F88,
+    .Data4 = .{ 0x95, 0x1C, 0x9D, 0x07, 0x82, 0xB4, 0xE3, 0x76 },
+};
+
+const IID_ITipInvocation: std.os.windows.GUID = .{
+    .Data1 = 0x37C994E7,
+    .Data2 = 0x432B,
+    .Data3 = 0x4834,
+    .Data4 = .{ 0xA2, 0xF7, 0xDC, 0xE1, 0xF1, 0x3B, 0x83, 0x4B },
+};
+
+const ITipInvocation = extern struct {
+    lpVtbl: *const Vtbl,
+
+    const Vtbl = extern struct {
+        QueryInterface: *const fn (*ITipInvocation, *const std.os.windows.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        AddRef: *const fn (*ITipInvocation) callconv(.winapi) u32,
+        Release: *const fn (*ITipInvocation) callconv(.winapi) u32,
+        Toggle: *const fn (*ITipInvocation, ?c.HWND) callconv(.winapi) c.HRESULT,
+    };
+};
+
+pub fn showOnScreenKeyboard() bool {
+    var raw: ?*anyopaque = null;
+    const hr = CoCreateInstance(
+        &CLSID_UIHostNoLaunch,
+        null,
+        CLSCTX_INPROC_HANDLER | CLSCTX_LOCAL_SERVER,
+        &IID_ITipInvocation,
+        &raw,
+    );
+    if (hr >= 0) if (raw) |ptr| {
+        const tip: *ITipInvocation = @ptrCast(@alignCast(ptr));
+        defer _ = tip.lpVtbl.Release(tip);
+        if (tip.lpVtbl.Toggle(tip, c.GetDesktopWindow()) >= 0) return true;
+    };
+    const res = ShellExecuteW(null, L("open"), L("TabTip.exe"), null, null, c.SW_SHOWNORMAL);
+    return @intFromPtr(res) > 32;
+}
 
 var task_dialog_fn: ?TaskDialogIndirectFn = null;
 var task_dialog_loaded = false;
@@ -366,7 +471,7 @@ const Template = struct {
 
 pub fn requestPromptTitle(surface: *Surface, kind: apprt.action.PromptTitle) bool {
     const hwnd = surface.hwnd orelse return false;
-    return c.PostMessageW(hwnd, WM_GHOSTTY_PROMPT_TITLE, @intCast(@intFromEnum(kind)), 0).toBool();
+    return c.PostMessageW(hwnd, WM_GHOSTTY_PROMPT_TITLE, @intCast(@backingInt(kind)), 0).toBool();
 }
 
 pub fn promptTitle(surface: *Surface, kind: apprt.action.PromptTitle) void {
@@ -469,4 +574,39 @@ fn runEditor(alloc: Allocator, path: []const u8) !void {
     var child = try std.process.spawn(global.io(), .{ .argv = argv.items });
     log.debug("opened config with editor={s} path={s}", .{ editor, path });
     _ = try child.wait(global.io());
+}
+
+pub fn exportTerminalIO(surface: *Surface, contents: []const u8) !bool {
+    const alloc = surface.app.core_app.alloc;
+    var raw_dlg: ?*anyopaque = null;
+    const hr = CoCreateInstance(
+        &CLSID_FileSaveDialog,
+        null,
+        CLSCTX_INPROC_SERVER,
+        &IID_IFileDialog,
+        &raw_dlg,
+    );
+    if (hr < 0 or raw_dlg == null) return false;
+    const dlg: *IFileDialog = @ptrCast(@alignCast(raw_dlg.?));
+    defer _ = dlg.lpVtbl.Release(dlg);
+
+    _ = dlg.lpVtbl.SetTitle(dlg, L("Export Terminal IO Events"));
+    _ = dlg.lpVtbl.SetFileName(dlg, L("ghostty-terminal-io.txt"));
+    if (dlg.lpVtbl.Show(dlg, surface.window.hwnd) < 0) return true;
+
+    var item: ?*IShellItem = null;
+    if (dlg.lpVtbl.GetResult(dlg, &item) < 0 or item == null) return false;
+    defer _ = item.?.lpVtbl.Release(item.?);
+
+    var wide_path: ?[*:0]u16 = null;
+    if (item.?.lpVtbl.GetDisplayName(item.?, SIGDN_FILESYSPATH, &wide_path) < 0 or wide_path == null) return false;
+    defer CoTaskMemFree(wide_path);
+
+    const path_utf8 = try std.unicode.utf16LeToUtf8Alloc(alloc, std.mem.span(wide_path.?));
+    defer alloc.free(path_utf8);
+
+    const file = try std.Io.Dir.createFileAbsolute(global.io(), path_utf8, .{});
+    defer file.close(global.io());
+    try file.writeStreamingAll(global.io(), contents);
+    return true;
 }

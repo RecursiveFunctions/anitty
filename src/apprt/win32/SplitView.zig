@@ -201,6 +201,18 @@ pub fn paint(
     }
 }
 
+pub fn unfocusedAlpha(unfocused_split_opacity: f64) u8 {
+    const clamped = std.math.clamp(unfocused_split_opacity, 0.15, 1.0);
+    const dim = 1.0 - clamped;
+    return @intFromFloat(@round(dim * 255.0));
+}
+
+test "SplitView unfocusedAlpha" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(u8, 0), unfocusedAlpha(1.0));
+    try testing.expectEqual(@as(u8, 77), unfocusedAlpha(0.7));
+}
+
 pub const Positioner = struct {
     hdwp: ?c.HDWP,
 

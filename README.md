@@ -21,6 +21,14 @@
   </p>
 </p>
 
+> [!IMPORTANT]
+> **Unofficial Community Windows Port (`RecursiveFunctions/ghostty`)**
+>
+> This repository maintains an experimental, community-driven Windows port (`-Dapp-runtime=win32`) and is **not** an official [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) release.
+>
+> - **Bug Reports:** Report all Windows-specific issues to [`RecursiveFunctions/ghostty/issues`](https://github.com/RecursiveFunctions/ghostty/issues). **Never** report issues from this fork to `ghostty-org/ghostty`.
+> - **Windows Documentation & AI Disclosure:** See [`dist/windows/README-windows.md`](dist/windows/README-windows.md) for Windows installation, supported features, provenance, and AI assistance disclosure (in accordance with [`AI_POLICY.md`](AI_POLICY.md)).
+
 ## About
 
 Ghostty is a terminal emulator that differentiates itself by being

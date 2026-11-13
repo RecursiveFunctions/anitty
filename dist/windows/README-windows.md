@@ -1,9 +1,21 @@
 # Ghostty for Windows
 
+> [!IMPORTANT]
+>
+> This is an **unofficial community build** maintained at [`RecursiveFunctions/ghostty`](https://github.com/RecursiveFunctions/ghostty). Report all Windows issues and crash reports to [`RecursiveFunctions/ghostty/issues`](https://github.com/RecursiveFunctions/ghostty/issues) — **never** to upstream `ghostty-org/ghostty`.
+
 Ghostty on Windows is a native Win32 application (`-Dapp-runtime=win32`)
 that renders with OpenGL and runs shells through ConPTY. It is
 experimental: the features below work, but see
 [Known issues](#known-issues) before relying on it.
+
+## Provenance & AI Assistance Disclosure
+
+In accordance with Ghostty's [`AI_POLICY.md`](../../AI_POLICY.md), this section documents the provenance and AI assistance involved in this Windows port:
+
+- **Upstream Base:** Built on [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) by Mitchell Hashimoto and contributors.
+- **Win32 Runtime Foundation:** Initial Win32 runtime (`src/apprt/win32/`), WGL OpenGL provider (`src/renderer/opengl/wgl.zig`), and Windows packaging scripts were derived from [`phalladar/ghostty-windows`](https://github.com/phalladar/ghostty-windows) by Josh Auriemma.
+- **AI Assistance Disclosure:** The Zig 0.17 / Ghostty 1.4.1-dev rebase and port, automated CI release pipeline, and Win32 feature parity implementation (search overlay, command palette, tab overview, quick terminal, global hotkeys, DWM backdrop/transparency, unfocused split dimming, `bell-features = border`, and Dear ImGui terminal inspector) were developed with AI assistance using **Kilo Code**, with human review, build verification, and runtime testing.
 
 ## Requirements
 
@@ -249,15 +261,6 @@ Not implemented yet:
   (COLR color font) is found but renders in grayscale if selected.
 - **Desktop notifications** are shown as tray balloons, not WinRT toasts,
   so they have no actions and are hidden while Focus Assist is on.
-- **Unfocused split dimming** (`unfocused-split-opacity`,
-  `unfocused-split-fill`) has no effect.
-- **Global keybindings** (`global:`) are not registered.
-- **Quick terminal**, **terminal inspector**, **command palette** and the
-  **search** overlay are not available.
-- **`background-opacity`** and **`background-blur`**: the window is always
-  opaque.
-- **`bell-features = border`** has no effect (the other bell features
-  work).
 - **OSC 8 links** open only `http`, `https`, `mailto` and local `file`
   URLs (folders and non-executable files); other schemes are refused.
 - **Localization**: the UI is English only (i18n is not built on

@@ -10,9 +10,17 @@ const c = @import("c.zig");
 const Window = @import("Window.zig");
 const Surface = @import("Surface.zig");
 const TabBar = @import("TabBar.zig");
+const SearchOverlay = @import("SearchOverlay.zig");
+const SurfaceOverlay = @import("SurfaceOverlay.zig");
+const CommandPalette = @import("CommandPalette.zig");
+const TabOverview = @import("TabOverview.zig");
+const QuickTerminal = @import("QuickTerminal.zig");
+const InspectorWindow = @import("InspectorWindow.zig");
+const hotkeyspkg = @import("hotkeys.zig");
 const taskbarpkg = @import("taskbar.zig");
 const dialogs = @import("dialogs.zig");
 const ipcpkg = @import("ipc.zig");
+const internal_os = @import("../../os/main.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -39,10 +47,13 @@ tick_pending: std.atomic.Value(bool) = .init(false),
 quit_timer_active: bool = false,
 quitting: bool = false,
 color_scheme: apprt.ColorScheme = .light,
+window_theme_override: ?apprt.action.WindowTheme = null,
 chrome: Window.Chrome = .{},
 com_initialized: bool = false,
 taskbar: taskbarpkg.State = .{},
 ipc: ipcpkg.Server = .{},
+hotkeys: hotkeyspkg.State = .{},
+quick_terminal: QuickTerminal = .{},
 
 pub fn init(
     self: *App,
@@ -106,8 +117,9 @@ pub fn init(
     errdefer self.ipc.deinit(self);
 
     try core_app.updateConfig(self, &self.config);
+    self.hotkeys.sync(self);
 
-    _ = try Window.create(self);
+    _ = try Window.create(self, null);
     if (!self.config._diagnostics.empty()) self.postToSelf(WM_GHOSTTY_CONFIG_ERRORS);
 }
 
@@ -152,9 +164,92 @@ fn registerClasses(instance: ?c.HINSTANCE) !void {
         .lpszClassName = tab_bar_class_name,
     };
     if (c.RegisterClassExW(&tab_bar_wc) == 0) return error.RegisterClassFailed;
+    errdefer _ = c.UnregisterClassW(tab_bar_class_name, instance);
+
+    const search_wc: c.WNDCLASSEXW = .{
+        .lpfnWndProc = SearchOverlay.wndProc,
+        .hInstance = instance,
+        .hCursor = cursor,
+        .lpszClassName = SearchOverlay.class_name,
+    };
+    if (c.RegisterClassExW(&search_wc) == 0) return error.RegisterClassFailed;
+    errdefer _ = c.UnregisterClassW(SearchOverlay.class_name, instance);
+
+    const banner_wc: c.WNDCLASSEXW = .{
+        .lpfnWndProc = SurfaceOverlay.bannerWndProc,
+        .hInstance = instance,
+        .hCursor = cursor,
+        .lpszClassName = SurfaceOverlay.banner_class_name,
+    };
+    if (c.RegisterClassExW(&banner_wc) == 0) return error.RegisterClassFailed;
+    errdefer _ = c.UnregisterClassW(SurfaceOverlay.banner_class_name, instance);
+
+    const pill_wc: c.WNDCLASSEXW = .{
+        .lpfnWndProc = SurfaceOverlay.pillWndProc,
+        .hInstance = instance,
+        .hCursor = cursor,
+        .lpszClassName = SurfaceOverlay.pill_class_name,
+    };
+    if (c.RegisterClassExW(&pill_wc) == 0) return error.RegisterClassFailed;
+    errdefer _ = c.UnregisterClassW(SurfaceOverlay.pill_class_name, instance);
+
+    const sb_wc: c.WNDCLASSEXW = .{
+        .lpfnWndProc = SurfaceOverlay.scrollbarWndProc,
+        .hInstance = instance,
+        .hCursor = cursor,
+        .lpszClassName = SurfaceOverlay.scrollbar_class_name,
+    };
+    if (c.RegisterClassExW(&sb_wc) == 0) return error.RegisterClassFailed;
+    errdefer _ = c.UnregisterClassW(SurfaceOverlay.scrollbar_class_name, instance);
+
+    const dim_wc: c.WNDCLASSEXW = .{
+        .lpfnWndProc = SurfaceOverlay.dimWndProc,
+        .hInstance = instance,
+        .hCursor = cursor,
+        .lpszClassName = SurfaceOverlay.dim_class_name,
+    };
+    if (c.RegisterClassExW(&dim_wc) == 0) return error.RegisterClassFailed;
+    errdefer _ = c.UnregisterClassW(SurfaceOverlay.dim_class_name, instance);
+
+    const cp_wc: c.WNDCLASSEXW = .{
+        .lpfnWndProc = CommandPalette.wndProc,
+        .hInstance = instance,
+        .hCursor = cursor,
+        .lpszClassName = CommandPalette.class_name,
+    };
+    if (c.RegisterClassExW(&cp_wc) == 0) return error.RegisterClassFailed;
+    errdefer _ = c.UnregisterClassW(CommandPalette.class_name, instance);
+
+    const to_wc: c.WNDCLASSEXW = .{
+        .lpfnWndProc = TabOverview.wndProc,
+        .hInstance = instance,
+        .hCursor = cursor,
+        .lpszClassName = TabOverview.class_name,
+    };
+    if (c.RegisterClassExW(&to_wc) == 0) return error.RegisterClassFailed;
+    errdefer _ = c.UnregisterClassW(TabOverview.class_name, instance);
+
+    const insp_wc: c.WNDCLASSEXW = .{
+        .style = c.CS_OWNDC,
+        .lpfnWndProc = InspectorWindow.wndProc,
+        .hInstance = instance,
+        .hIcon = icon,
+        .hCursor = cursor,
+        .lpszClassName = InspectorWindow.class_name,
+        .hIconSm = icon,
+    };
+    if (c.RegisterClassExW(&insp_wc) == 0) return error.RegisterClassFailed;
 }
 
 fn unregisterClasses(instance: ?c.HINSTANCE) void {
+    _ = c.UnregisterClassW(InspectorWindow.class_name, instance);
+    _ = c.UnregisterClassW(TabOverview.class_name, instance);
+    _ = c.UnregisterClassW(CommandPalette.class_name, instance);
+    _ = c.UnregisterClassW(SurfaceOverlay.dim_class_name, instance);
+    _ = c.UnregisterClassW(SurfaceOverlay.scrollbar_class_name, instance);
+    _ = c.UnregisterClassW(SurfaceOverlay.pill_class_name, instance);
+    _ = c.UnregisterClassW(SurfaceOverlay.banner_class_name, instance);
+    _ = c.UnregisterClassW(SearchOverlay.class_name, instance);
     _ = c.UnregisterClassW(tab_bar_class_name, instance);
     _ = c.UnregisterClassW(surface_class_name, instance);
     _ = c.UnregisterClassW(window_class_name, instance);
@@ -176,6 +271,8 @@ pub fn run(self: *App) !void {
 
 pub fn terminate(self: *App) void {
     self.quitting = true;
+    self.quick_terminal.deinit(self);
+    self.hotkeys.deinit(self.core_app.alloc, self.msg_hwnd);
     self.destroyAllWindows();
     self.disarmQuitTimer();
     self.windows.deinit(self.core_app.alloc);
@@ -246,10 +343,17 @@ fn messageWndProc(
             if (self.confirmTerminate(L("Close All Windows?"))) self.destroyAllWindows();
             return 0;
         },
+        c.WM_HOTKEY => {
+            _ = self.hotkeys.handle(self, @intCast(@as(isize, @bitCast(wparam))));
+            return 0;
+        },
         c.WM_TIMER => if (wparam == quit_timer_id) {
             log.debug("quit timer expired", .{});
             self.disarmQuitTimer();
             self.quit();
+            return 0;
+        } else if (wparam == QuickTerminal.timer_id) {
+            self.quick_terminal.tickTimer(self);
             return 0;
         },
         else => {},
@@ -444,10 +548,11 @@ fn updateColorScheme(self: *App) void {
 }
 
 fn configChanged(self: *App, target: apprt.Target, config: *const Config) void {
-    const chrome: Window.Chrome = .init(config, self.color_scheme);
+    const chrome: Window.Chrome = .init(config, self.color_scheme, self.window_theme_override);
     switch (target) {
         .app => {
             self.chrome = chrome;
+            self.hotkeys.sync(self);
             for (self.windows.items) |window| window.applyChrome(chrome);
         },
         .surface => |core_surface| core_surface.rt_surface.window.applyChrome(chrome),
@@ -474,12 +579,15 @@ pub fn performAction(
 
         .goto_window => return self.gotoWindow(value),
 
-        .new_window => _ = try Window.create(self),
+        .new_window => _ = try Window.create(self, switch (target) {
+            .app => null,
+            .surface => |core| core,
+        }),
 
         .new_tab => switch (target) {
             .surface => |core| core.rt_surface.window.newTab(core),
             .app => if (self.activeWindow()) |window| window.newTab(null) else {
-                _ = try Window.create(self);
+                _ = try Window.create(self, null);
             },
         },
 
@@ -558,6 +666,73 @@ pub fn performAction(
             surface.window.setInitialSize(value.width, value.height);
         },
 
+        .reset_window_size => {
+            const surface = targetSurface(target) orelse return false;
+            return surface.window.resetWindowSize();
+        },
+
+        .resize_window => {
+            const surface = targetSurface(target) orelse return false;
+            return surface.window.resizeSurface(surface, value);
+        },
+
+        .cell_size => {
+            const surface = targetSurface(target) orelse return false;
+            surface.setCellSize(value.width, value.height);
+        },
+
+        .toggle_window_decorations => {
+            const surface = targetSurface(target) orelse return false;
+            return surface.window.toggleWindowDecorations();
+        },
+
+        .toggle_command_palette => {
+            const win = if (targetSurface(target)) |s| s.window else self.activeWindow() orelse return false;
+            return win.command_palette.toggle();
+        },
+
+        .toggle_tab_overview => {
+            const win = if (targetSurface(target)) |s| s.window else self.activeWindow() orelse return false;
+            return win.tab_overview.toggle();
+        },
+
+        .toggle_quick_terminal => {
+            return try self.quick_terminal.toggle(self);
+        },
+
+        .toggle_background_opacity => {
+            const win = if (targetSurface(target)) |s| s.window else self.activeWindow() orelse return false;
+            return win.toggleBackgroundOpacity();
+        },
+
+        .set_window_theme => {
+            self.window_theme_override = if (value == .config) null else value;
+            self.chrome = .init(&self.config, self.color_scheme, self.window_theme_override);
+            for (self.windows.items) |window| window.applyChrome(self.chrome);
+        },
+
+        .copy_title_to_clipboard => {
+            const surface = targetSurface(target) orelse return false;
+            return surface.copyTitleToClipboard();
+        },
+
+        .pwd => {
+            const surface = targetSurface(target) orelse return false;
+            try surface.setPwd(value.pwd);
+        },
+
+        .open_url => internal_os.open(value.kind, value.url) catch |err| {
+            log.warn("error opening url err={}", .{err});
+            return false;
+        },
+
+        .render => switch (target) {
+            .app => for (self.core_app.surfaces.items) |s| s.refresh(),
+            .surface => |core| core.rt_surface.refresh(),
+        },
+
+        .show_on_screen_keyboard => return dialogs.showOnScreenKeyboard(),
+
         .present_terminal => {
             const surface = targetSurface(target) orelse return false;
             if (surface.window.hwnd) |hwnd| presentWindow(hwnd);
@@ -587,7 +762,7 @@ pub fn performAction(
 
         .ring_bell => {
             const surface = targetSurface(target) orelse return false;
-            surface.window.ringBell();
+            surface.window.ringBell(surface);
         },
 
         .toggle_maximize => {
@@ -610,7 +785,10 @@ pub fn performAction(
             surface.setMouseVisibility(value == .visible);
         },
 
-        .mouse_over_link => {},
+        .mouse_over_link => {
+            const surface = targetSurface(target) orelse return false;
+            try surface.setMouseOverLink(value.url);
+        },
 
         .progress_report => {
             const surface = targetSurface(target) orelse return false;
@@ -631,13 +809,73 @@ pub fn performAction(
 
         .toggle_visibility => taskbarpkg.toggleVisibility(self),
 
+        .start_search => {
+            const surface = targetSurface(target) orelse return false;
+            surface.search_overlay.start(value.needle);
+        },
+
+        .end_search => {
+            const surface = targetSurface(target) orelse return false;
+            surface.search_overlay.end();
+        },
+
+        .search_total => {
+            const surface = targetSurface(target) orelse return false;
+            surface.search_overlay.setTotal(value.total);
+        },
+
+        .search_selected => {
+            const surface = targetSurface(target) orelse return false;
+            surface.search_overlay.setSelected(value.selected);
+        },
+
+        .show_child_exited => {
+            const surface = targetSurface(target) orelse return false;
+            return surface.overlay.setChildExited(value);
+        },
+
+        .scrollbar => {
+            const surface = targetSurface(target) orelse return false;
+            surface.overlay.setScrollbar(value);
+        },
+
+        .readonly => {
+            const surface = targetSurface(target) orelse return false;
+            surface.overlay.setReadonly(value == .on);
+        },
+
+        .renderer_health => {
+            const surface = targetSurface(target) orelse return false;
+            surface.overlay.setRendererHealth(value);
+        },
+
+        .key_sequence => {
+            const surface = targetSurface(target) orelse return false;
+            try surface.overlay.setKeySequence(self.core_app.alloc, value);
+        },
+
+        .key_table => {
+            const surface = targetSurface(target) orelse return false;
+            try surface.overlay.setKeyTable(self.core_app.alloc, value);
+        },
+
+        .inspector => {
+            const surface = targetSurface(target) orelse return false;
+            return InspectorWindow.toggle(surface, value);
+        },
+
+        .render_inspector => {
+            const surface = targetSurface(target) orelse return false;
+            if (surface.inspector_window) |win| win.queueRender();
+        },
+
+        .export_terminal_io => {
+            const surface = targetSurface(target) orelse return false;
+            return try dialogs.exportTerminalIO(surface, value.contents);
+        },
+
         .color_change,
-        .renderer_health,
-        .pwd,
         .selection_changed,
-        .readonly,
-        .key_sequence,
-        .key_table,
         .secure_input,
         => log.debug("ignored action={t}", .{action}),
 

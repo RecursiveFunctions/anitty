@@ -87,13 +87,19 @@ pub const CS_HREDRAW: UINT = 0x0002;
 pub const CS_OWNDC: UINT = 0x0020;
 
 pub const WS_OVERLAPPEDWINDOW: DWORD = 0x00CF0000;
+pub const WS_CAPTION: DWORD = 0x00C00000;
+pub const WS_BORDER: DWORD = 0x00800000;
+pub const WS_SYSMENU: DWORD = 0x00080000;
+pub const WS_THICKFRAME: DWORD = 0x00040000;
 pub const WS_CHILD: DWORD = 0x40000000;
 pub const WS_VISIBLE: DWORD = 0x10000000;
 pub const WS_CLIPSIBLINGS: DWORD = 0x04000000;
 pub const WS_CLIPCHILDREN: DWORD = 0x02000000;
+pub const ES_AUTOHSCROLL: DWORD = 0x0080;
 pub const CW_USEDEFAULT: c_int = @bitCast(@as(u32, 0x80000000));
 
 pub const HWND_MESSAGE: HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -3))));
+pub const HWND_TOPMOST: HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
 pub const GWLP_USERDATA: c_int = -21;
 
 pub const SW_SHOW: c_int = 5;
@@ -169,7 +175,12 @@ pub const WM_ERASEBKGND: UINT = 0x0014;
 pub const WM_GETMINMAXINFO: UINT = 0x0024;
 pub const WM_NCCREATE: UINT = 0x0081;
 pub const WM_NCDESTROY: UINT = 0x0082;
+pub const WM_SETFONT: UINT = 0x0030;
+pub const WM_COMMAND: UINT = 0x0111;
 pub const WM_TIMER: UINT = 0x0113;
+pub const WM_CTLCOLOREDIT: UINT = 0x0133;
+pub const EM_SETSEL: UINT = 0x00B1;
+pub const EN_CHANGE: u16 = 0x0300;
 pub const WM_DPICHANGED: UINT = 0x02E0;
 pub const WM_DPICHANGED_AFTERPARENT: UINT = 0x02E3;
 pub const WM_APP: UINT = 0x8000;
@@ -188,8 +199,18 @@ pub const WM_MOUSEWHEEL: UINT = 0x020A;
 pub const WM_XBUTTONDOWN: UINT = 0x020B;
 pub const WM_XBUTTONUP: UINT = 0x020C;
 pub const WM_MOUSEHWHEEL: UINT = 0x020E;
+pub const WM_SIZING: UINT = 0x0214;
 pub const WM_CAPTURECHANGED: UINT = 0x0215;
 pub const WM_MOUSELEAVE: UINT = 0x02A3;
+
+pub const WMSZ_LEFT: WPARAM = 1;
+pub const WMSZ_RIGHT: WPARAM = 2;
+pub const WMSZ_TOP: WPARAM = 3;
+pub const WMSZ_TOPLEFT: WPARAM = 4;
+pub const WMSZ_TOPRIGHT: WPARAM = 5;
+pub const WMSZ_BOTTOM: WPARAM = 6;
+pub const WMSZ_BOTTOMLEFT: WPARAM = 7;
+pub const WMSZ_BOTTOMRIGHT: WPARAM = 8;
 
 pub fn loword(v: LPARAM) u16 {
     return @truncate(@as(usize, @bitCast(v)));
@@ -224,9 +245,13 @@ pub extern "user32" fn DispatchMessageW(msg: *const MSG) callconv(.winapi) LRESU
 pub extern "user32" fn PostMessageW(hwnd: ?HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.winapi) BOOL;
 pub extern "user32" fn PostQuitMessage(code: c_int) callconv(.winapi) void;
 pub extern "user32" fn DefWindowProcW(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.winapi) LRESULT;
+pub extern "user32" fn CallWindowProcW(prev: WNDPROC, hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.winapi) LRESULT;
+pub extern "user32" fn SendMessageW(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.winapi) LRESULT;
 pub extern "user32" fn GetWindowLongPtrW(hwnd: HWND, index: c_int) callconv(.winapi) LONG_PTR;
 pub extern "user32" fn SetWindowLongPtrW(hwnd: HWND, index: c_int, value: LONG_PTR) callconv(.winapi) LONG_PTR;
 pub extern "user32" fn SetWindowTextW(hwnd: HWND, text: LPCWSTR) callconv(.winapi) BOOL;
+pub extern "user32" fn GetWindowTextLengthW(hwnd: HWND) callconv(.winapi) c_int;
+pub extern "user32" fn GetWindowTextW(hwnd: HWND, buf: [*]u16, max: c_int) callconv(.winapi) c_int;
 pub extern "user32" fn GetClientRect(hwnd: HWND, rect: *RECT) callconv(.winapi) BOOL;
 pub extern "user32" fn MoveWindow(hwnd: HWND, x: c_int, y: c_int, w: c_int, h: c_int, repaint: BOOL) callconv(.winapi) BOOL;
 pub extern "user32" fn SetWindowPos(hwnd: HWND, after: ?HWND, x: c_int, y: c_int, cx: c_int, cy: c_int, flags: UINT) callconv(.winapi) BOOL;
@@ -246,7 +271,14 @@ pub extern "user32" fn ReleaseCapture() callconv(.winapi) BOOL;
 pub extern "user32" fn GetCapture() callconv(.winapi) ?HWND;
 pub extern "user32" fn GetSystemMetrics(index: c_int) callconv(.winapi) c_int;
 pub const SM_CXDRAG: c_int = 68;
+pub const VK_RETURN: WPARAM = 0x0D;
 pub const VK_ESCAPE: WPARAM = 0x1B;
+pub const VK_LEFT: WPARAM = 0x25;
+pub const VK_UP: WPARAM = 0x26;
+pub const VK_RIGHT: WPARAM = 0x27;
+pub const VK_DOWN: WPARAM = 0x28;
+pub const VK_PRIOR: WPARAM = 0x21;
+pub const VK_NEXT: WPARAM = 0x22;
 pub const WM_CANCELMODE: UINT = 0x001F;
 pub extern "user32" fn SetParent(child: HWND, parent: ?HWND) callconv(.winapi) ?HWND;
 pub extern "user32" fn WindowFromPoint(pt: POINT) callconv(.winapi) ?HWND;
@@ -256,7 +288,12 @@ pub extern "user32" fn GetTopWindow(hwnd: ?HWND) callconv(.winapi) ?HWND;
 pub extern "user32" fn GetWindow(hwnd: HWND, cmd: UINT) callconv(.winapi) ?HWND;
 pub const GW_HWNDNEXT: UINT = 2;
 pub const GWL_EXSTYLE: c_int = -20;
+pub const WS_EX_TOPMOST: DWORD = 0x00000008;
 pub const WS_EX_TRANSPARENT: usize = 0x00000020;
+pub const WS_EX_TOOLWINDOW: DWORD = 0x00000080;
+pub const WS_EX_APPWINDOW: DWORD = 0x00040000;
+pub const WS_EX_LAYERED: DWORD = 0x00080000;
+pub const LWA_ALPHA: DWORD = 0x00000002;
 pub extern "dwmapi" fn DwmGetWindowAttribute(hwnd: HWND, attr: DWORD, value: *anyopaque, size: DWORD) callconv(.winapi) HRESULT;
 pub const DWMWA_CLOAKED: DWORD = 14;
 pub const DWMWA_CLOAK: DWORD = 13;
@@ -289,12 +326,28 @@ pub const SW_RESTORE: c_int = 9;
 pub const SWP_NOSIZE: UINT = 0x0001;
 pub const SWP_FRAMECHANGED: UINT = 0x0020;
 pub const SWP_NOOWNERZORDER: UINT = 0x0200;
+pub const MONITOR_DEFAULTTOPRIMARY: DWORD = 0x00000001;
 pub const MONITOR_DEFAULTTONEAREST: DWORD = 0x00000002;
 
 pub const DWMWA_USE_IMMERSIVE_DARK_MODE: DWORD = 20;
+pub const DWMWA_BORDER_COLOR: DWORD = 34;
 pub const DWMWA_CAPTION_COLOR: DWORD = 35;
 pub const DWMWA_TEXT_COLOR: DWORD = 36;
+pub const DWMWA_SYSTEMBACKDROP_TYPE: DWORD = 38;
 pub const DWMWA_COLOR_DEFAULT: COLORREF = 0xFFFFFFFF;
+
+pub const DWMSBT_AUTO: DWORD = 0;
+pub const DWMSBT_NONE: DWORD = 1;
+pub const DWMSBT_MAINWINDOW: DWORD = 2;
+pub const DWMSBT_TRANSIENTWINDOW: DWORD = 3;
+pub const DWMSBT_TABBEDWINDOW: DWORD = 4;
+
+pub const MARGINS = extern struct {
+    cxLeftWidth: c_int = 0,
+    cxRightWidth: c_int = 0,
+    cyTopHeight: c_int = 0,
+    cyBottomHeight: c_int = 0,
+};
 
 pub const MB_OK: UINT = 0x00000000;
 pub const MB_ICONERROR: UINT = 0x00000010;
@@ -334,10 +387,13 @@ pub extern "user32" fn GetMonitorInfoW(monitor: HMONITOR, info: *MONITORINFO) ca
 pub extern "user32" fn IsZoomed(hwnd: HWND) callconv(.winapi) BOOL;
 pub extern "user32" fn IsIconic(hwnd: HWND) callconv(.winapi) BOOL;
 pub extern "user32" fn GetWindowRect(hwnd: HWND, rect: *RECT) callconv(.winapi) BOOL;
+pub extern "user32" fn GetDesktopWindow() callconv(.winapi) ?HWND;
 pub extern "user32" fn GetForegroundWindow() callconv(.winapi) ?HWND;
 pub extern "user32" fn MessageBeep(kind: UINT) callconv(.winapi) BOOL;
 pub extern "user32" fn FlashWindowEx(info: *const FLASHWINFO) callconv(.winapi) BOOL;
+pub extern "user32" fn SetLayeredWindowAttributes(hwnd: HWND, cr_key: COLORREF, alpha: u8, flags: DWORD) callconv(.winapi) BOOL;
 pub extern "dwmapi" fn DwmSetWindowAttribute(hwnd: HWND, attr: DWORD, value: *const anyopaque, size: DWORD) callconv(.winapi) HRESULT;
+pub extern "dwmapi" fn DwmExtendFrameIntoClientArea(hwnd: HWND, margins: *const MARGINS) callconv(.winapi) HRESULT;
 pub extern "dwmapi" fn DwmFlush() callconv(.winapi) HRESULT;
 pub extern "advapi32" fn RegGetValueW(
     key: HKEY,
@@ -377,13 +433,25 @@ pub const VK_RCONTROL: UINT = 0xA3;
 pub const VK_LMENU: UINT = 0xA4;
 pub const VK_RMENU: UINT = 0xA5;
 
+pub const MAPVK_VSC_TO_VK_EX: UINT = 3;
 pub const MAPVK_VK_TO_VSC_EX: UINT = 4;
 pub const VK_PROCESSKEY: UINT = 0xE5;
 pub const VK_PACKET: UINT = 0xE7;
 pub const WM_INPUTLANGCHANGE: UINT = 0x0051;
+pub const WM_HOTKEY: UINT = 0x0312;
+pub const MOD_ALT: UINT = 0x0001;
+pub const MOD_CONTROL: UINT = 0x0002;
+pub const MOD_SHIFT: UINT = 0x0004;
+pub const MOD_WIN: UINT = 0x0008;
+pub const MOD_NOREPEAT: UINT = 0x4000;
 pub const PM_NOREMOVE: UINT = 0;
 pub const GWLP_WNDPROC: c_int = -4;
 pub const KLF_NOTELLSHELL: UINT = 0x80;
+
+pub extern "user32" fn RegisterHotKey(hwnd: ?HWND, id: c_int, fs_modifiers: UINT, vk: UINT) callconv(.winapi) BOOL;
+pub extern "user32" fn UnregisterHotKey(hwnd: ?HWND, id: c_int) callconv(.winapi) BOOL;
+pub extern "user32" fn VkKeyScanExW(ch: u16, dwhkl: ?HKL) callconv(.winapi) i16;
+pub extern "kernel32" fn GetTickCount64() callconv(.winapi) u64;
 
 pub extern "user32" fn PeekMessageW(msg: *MSG, hwnd: ?HWND, min: UINT, max: UINT, remove: UINT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetMessageTime() callconv(.winapi) i32;
@@ -433,7 +501,9 @@ pub const SW_SHOWNA: c_int = 8;
 pub const TRANSPARENT: c_int = 1;
 pub const SRCCOPY: DWORD = 0x00CC0020;
 pub const PS_SOLID: c_int = 0;
+pub const DT_LEFT: UINT = 0x00000000;
 pub const DT_CENTER: UINT = 0x00000001;
+pub const DT_RIGHT: UINT = 0x00000002;
 pub const DT_VCENTER: UINT = 0x00000004;
 pub const DT_SINGLELINE: UINT = 0x00000020;
 pub const DT_NOPREFIX: UINT = 0x00000800;
@@ -502,6 +572,7 @@ pub extern "gdi32" fn CreateSolidBrush(color: COLORREF) callconv(.winapi) ?HBRUS
 pub extern "gdi32" fn CreatePen(style: c_int, width: c_int, color: COLORREF) callconv(.winapi) ?HPEN;
 pub extern "gdi32" fn CreateFontIndirectW(lf: *const LOGFONTW) callconv(.winapi) ?HFONT;
 pub extern "gdi32" fn SetBkMode(hdc: HDC, mode: c_int) callconv(.winapi) c_int;
+pub extern "gdi32" fn SetBkColor(hdc: HDC, color: COLORREF) callconv(.winapi) COLORREF;
 pub extern "gdi32" fn SetTextColor(hdc: HDC, color: COLORREF) callconv(.winapi) COLORREF;
 pub extern "gdi32" fn MoveToEx(hdc: HDC, x: c_int, y: c_int, prev: ?*POINT) callconv(.winapi) BOOL;
 pub extern "gdi32" fn LineTo(hdc: HDC, x: c_int, y: c_int) callconv(.winapi) BOOL;

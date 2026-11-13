@@ -139,13 +139,14 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           $files = Get-ChildItem release-assets -File | ForEach-Object { $_.FullName }
-          gh release view $env:TAG *> $null
+          gh release view $env:TAG --repo $env:REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG @files --clobber
+            gh release upload $env:TAG @files --repo $env:REPOSITORY --clobber
           } else {
             $notes = "Ghostty for Windows $env:VERSION, an unofficial community port of [Ghostty](https://github.com/ghostty-org/ghostty).`n`n**Install:** download ``Ghostty-Windows-Setup-x64.exe`` and run it (per-user, no admin needed).`n**Portable:** unzip ``Ghostty-Windows-x64.zip`` and run ``ghostty\bin\ghostty.exe``.`n`nThe binaries are not code-signed yet, so Windows SmartScreen may ask you to confirm (More info, then Run anyway). Verify downloads against ``SHA256SUMS.txt``."
-            gh release create $env:TAG @files --target $env:TARGET_SHA --title "Ghostty for Windows $env:VERSION" --notes $notes
+            gh release create $env:TAG @files --repo $env:REPOSITORY --target $env:TARGET_SHA --title "Ghostty for Windows $env:VERSION" --notes $notes
           }
           if ($LASTEXITCODE -ne 0) { throw "gh release failed with $LASTEXITCODE" }

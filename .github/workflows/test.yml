@@ -1429,7 +1429,7 @@ jobs:
         shell: pwsh
         run: |
           for ($i = 1; $i -le 5; $i++) {
-            zig build --fetch=all
+            zig build --fetch -Dapp-runtime=win32
             if ($LASTEXITCODE -eq 0) { exit 0 }
             Start-Sleep -Seconds (20 * $i)
           }

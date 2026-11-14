@@ -48,8 +48,9 @@ if (-not (Test-Path $themesDir)) {
 
 $required = @(
     $exe,
-    $themesDir,
+    (Join-Path $Prefix "share\ghostty\themes"),
     (Join-Path $Prefix "share\ghostty\shell-integration"),
+    (Join-Path $Prefix "share\locale"),
     (Join-Path $Prefix "share\terminfo\ghostty.terminfo")
 )
 foreach ($path in $required) {
@@ -108,6 +109,7 @@ if ($ConptyDir) {
 }
 
 Copy-Item -Recurse (Join-Path $Prefix "share\ghostty") (Join-Path $root "share")
+Copy-Item -Recurse (Join-Path $Prefix "share\locale") (Join-Path $root "share")
 Copy-Item -Recurse (Join-Path $Prefix "share\terminfo") (Join-Path $root "share")
 Copy-Item (Join-Path $repoRoot "LICENSE") $root
 Copy-Item (Join-Path $PSScriptRoot "THIRD-PARTY-NOTICES.md") $root

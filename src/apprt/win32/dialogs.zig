@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const apprt = @import("../../apprt.zig");
 const configpkg = @import("../../config.zig");
 const global = @import("../../global.zig");
+const i18n = @import("../../os/main.zig").i18n;
 const c = @import("c.zig");
 const App = @import("App.zig");
 const Surface = @import("Surface.zig");
@@ -283,20 +284,46 @@ fn iconFlags(icon: Icon) c.UINT {
 pub const CloseTarget = enum { app, window, tab, surface };
 
 pub fn confirmClose(owner: ?c.HWND, target: CloseTarget) bool {
+    const alloc = global.alloc();
+    const main_utf8: [*:0]const u8 = switch (target) {
+        .app => i18n._("Quit Ghostty?"),
+        .window => i18n._("Close Window?"),
+        .tab => i18n._("Close Tab?"),
+        .surface => i18n._("Close Split?"),
+    };
+    const content_utf8: [*:0]const u8 = switch (target) {
+        .app => i18n._("All terminal sessions will be terminated."),
+        .window => i18n._("All terminal sessions in this window will be terminated."),
+        .tab => i18n._("All terminal sessions in this tab will be terminated."),
+        .surface => i18n._("The currently running process in this split will be terminated."),
+    };
+    const yes_utf8 = i18n._("Close");
+    const no_utf8 = i18n._("Cancel");
+
+    const main_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(main_utf8)) catch null;
+    defer if (main_w) |v| alloc.free(v);
+    const content_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(content_utf8)) catch null;
+    defer if (content_w) |v| alloc.free(v);
+    const yes_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(yes_utf8)) catch null;
+    defer if (yes_w) |v| alloc.free(v);
+    const no_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(no_utf8)) catch null;
+    defer if (no_w) |v| alloc.free(v);
+
     return confirm(owner, .{
-        .main = switch (target) {
+        .main = main_w orelse switch (target) {
             .app => L("Quit Ghostty?"),
             .window => L("Close Window?"),
             .tab => L("Close Tab?"),
-            .surface => L("Close Terminal?"),
+            .surface => L("Close Split?"),
         },
-        .content = switch (target) {
+        .content = content_w orelse switch (target) {
             .app => L("All terminal sessions will be terminated."),
             .window => L("All terminal sessions in this window will be terminated."),
             .tab => L("All terminal sessions in this tab will be terminated."),
-            .surface => L("The currently running process in this terminal will be terminated."),
+            .surface => L("The currently running process in this split will be terminated."),
         },
-        .yes = L("Close"),
+        .yes = yes_w orelse L("Close"),
+        .no = no_w orelse L("Cancel"),
     });
 }
 
@@ -478,24 +505,33 @@ pub fn promptTitle(surface: *Surface, kind: apprt.action.PromptTitle) void {
     const app = surface.app;
     const alloc = app.core_app.alloc;
     const window = surface.window;
-    const current: []const u8, const title: [:0]const u16 = switch (kind) {
-        .surface => .{ surface.getEffectiveTitle() orelse "", L("Change Terminal Title") },
+    const current: []const u8, const title_utf8: [*:0]const u8, const fallback_title: [:0]const u16 = switch (kind) {
+        .surface => .{ surface.getEffectiveTitle() orelse "", i18n._("Change Terminal Title"), L("Change Terminal Title") },
         .tab => .{
             if (window.tabIndex(surface)) |i| window.tabTitle(i) else "",
+            i18n._("Change Tab Title"),
             L("Change Tab Title"),
         },
         .window => .{
             window.title_override orelse
                 if (window.tabIndex(surface)) |i| window.tabTitle(i) else "",
+            i18n._("Change Window Title"),
             L("Change Window Title"),
         },
     };
+    const title_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(title_utf8)) catch null;
+    defer if (title_w) |v| alloc.free(v);
+    const label_w = std.unicode.utf8ToUtf16LeAllocZ(
+        alloc,
+        std.mem.span(i18n._("Leave blank to restore the default title.")),
+    ) catch null;
+    defer if (label_w) |v| alloc.free(v);
 
     const value = promptText(
         alloc,
         window.hwnd,
-        title,
-        L("Leave blank to restore the default title."),
+        title_w orelse fallback_title,
+        label_w orelse L("Leave blank to restore the default title."),
         current,
     ) catch |err| {
         log.warn("error showing title prompt err={}", .{err});

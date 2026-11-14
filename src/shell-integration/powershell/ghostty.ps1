@@ -174,3 +174,13 @@ function global:prompt {
     __Ghostty-RecordPrompt $text
     "$e]133;A;redraw=0$b$text$e]133;B$b"
 }
+
+if ((__Ghostty-HasFeature 'ssh-env') -or (__Ghostty-HasFeature 'ssh-terminfo')) {
+    function global:ssh {
+        $ghosttyExe = if ($env:GHOSTTY_BIN_DIR) { Join-Path $env:GHOSTTY_BIN_DIR 'ghostty.exe' } else { 'ghostty.exe' }
+        $flags = @()
+        if (-not (__Ghostty-HasFeature 'ssh-env')) { $flags += '--forward-env=false' }
+        if (-not (__Ghostty-HasFeature 'ssh-terminfo')) { $flags += '--terminfo=false' }
+        & $ghosttyExe '+ssh' @flags '--' @args
+    }
+}

@@ -3,6 +3,7 @@ const apprt = @import("../../apprt.zig");
 const c = @import("c.zig");
 const App = @import("App.zig");
 const Window = @import("Window.zig");
+const toast = @import("toast.zig");
 
 const log = std.log.scoped(.win32_taskbar);
 
@@ -233,6 +234,7 @@ pub fn commandFinished(window: *Window, value: apprt.Action.Value(.command_finis
 
 pub fn notify(app: *App, title: []const u8, body: []const u8) void {
     if (!app.config.@"desktop-notifications") return;
+    if (toast.show(app.core_app.alloc, title, body)) return;
     if (!ensureIcon(app)) return;
     const hwnd = app.msg_hwnd orelse return;
     var data: NOTIFYICONDATAW = .{

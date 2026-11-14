@@ -1,9 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const build_config = @import("../build_config.zig");
-const locales = @import("i18n_locales.zig");
+const global = @import("../global.zig");
+const internal_os = @import("main.zig");
+const locales = @import("i18n_locales.zig").locales;
 
 const log = std.log.scoped(.i18n);
+
+var windows_mo_data: ?[]const u8 = null;
 
 /// Set for faster membership lookup of locales.
 pub const locales_map = map: {
@@ -29,8 +33,7 @@ pub fn init(resources_dir: []const u8) InitError!void {
     if (comptime !build_config.i18n) return;
 
     switch (builtin.target.os.tag) {
-        // i18n is unsupported on Windows
-        .windows => return,
+        .windows => try initWindows(resources_dir),
 
         else => {
             // Our resources dir is always nested below the share dir that
@@ -51,13 +54,150 @@ pub fn init(resources_dir: []const u8) InitError!void {
     }
 }
 
+fn initWindows(resources_dir: []const u8) InitError!void {
+    const share_dir = std.fs.path.dirname(resources_dir) orelse
+        return error.InvalidResourcesDir;
+
+    var env_buf: [256]u8 = undefined;
+    const raw_locale = readWindowsLocaleEnv(&env_buf) orelse return;
+    const matched = matchSupportedLocaleList(raw_locale) orelse return;
+
+    const alloc = global.alloc();
+    const mo_path = std.fs.path.join(alloc, &.{
+        share_dir,
+        "locale",
+        matched,
+        "LC_MESSAGES",
+        build_config.bundle_id ++ ".mo",
+    }) catch return error.OutOfMemory;
+    defer alloc.free(mo_path);
+
+    const data = std.Io.Dir.cwd().readFileAlloc(
+        global.io(),
+        mo_path,
+        alloc,
+        .limited(4 * 1024 * 1024),
+    ) catch |err| {
+        log.debug("no translation catalog loaded path={s} err={}", .{ mo_path, err });
+        return;
+    };
+
+    if (windows_mo_data) |old| alloc.free(old);
+    windows_mo_data = data;
+    log.info("loaded Windows translation catalog locale={s} bytes={d}", .{ matched, data.len });
+}
+
+fn readWindowsLocaleEnv(buf: []u8) ?[]const u8 {
+    if (comptime builtin.target.os.tag != .windows) return null;
+    const windows = internal_os.windows;
+    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    const keys = [_][:0]const u16{
+        L("LANGUAGE"),
+        L("LC_ALL"),
+        L("LC_MESSAGES"),
+        L("LANG"),
+    };
+    var wide_buf: [128]u16 = undefined;
+    for (keys) |key| {
+        const len = windows.exp.kernel32.GetEnvironmentVariableW(key, &wide_buf, wide_buf.len);
+        if (len > 0 and len < wide_buf.len) {
+            const utf8_len = std.unicode.utf16LeToUtf8(buf, wide_buf[0..len]) catch continue;
+            if (utf8_len > 0) return buf[0..utf8_len];
+        }
+    }
+    const name_len = windows.exp.kernel32.GetUserDefaultLocaleName(&wide_buf, wide_buf.len);
+    if (name_len > 1) {
+        const utf8_len = std.unicode.utf16LeToUtf8(buf, wide_buf[0..@intCast(name_len - 1)]) catch return null;
+        if (utf8_len > 0) return buf[0..utf8_len];
+    }
+    return null;
+}
+
+pub fn matchSupportedLocaleList(list: []const u8) ?[:0]const u8 {
+    var it = std.mem.tokenizeScalar(u8, list, ':');
+    while (it.next()) |item| {
+        if (matchSupportedLocale(item)) |matched| return matched;
+    }
+    return null;
+}
+
+pub fn matchSupportedLocale(raw_locale: []const u8) ?[:0]const u8 {
+    const trimmed = std.mem.trim(u8, raw_locale, " \t\r\n");
+    if (trimmed.len == 0) return null;
+
+    const dot = std.mem.indexOfScalar(u8, trimmed, '.') orelse trimmed.len;
+    const without_enc = trimmed[0..dot];
+    if (without_enc.len == 0) return null;
+
+    var norm_buf: [64]u8 = undefined;
+    const norm = normalizeLocale(&norm_buf, without_enc) catch return null;
+
+    for (locales) |loc| {
+        if (std.mem.eql(u8, loc, norm)) return loc;
+    }
+
+    const sep = std.mem.indexOfAny(u8, norm, "_@") orelse norm.len;
+    const lang = norm[0..sep];
+    if (lang.len == 0 or std.mem.eql(u8, lang, "en") or std.mem.eql(u8, lang, "C") or std.mem.eql(u8, lang, "POSIX")) {
+        return null;
+    }
+
+    for (locales) |loc| {
+        if (std.mem.eql(u8, loc, lang)) return loc;
+    }
+    for (locales) |loc| {
+        if (loc.len > lang.len and std.mem.startsWith(u8, loc, lang) and (loc[lang.len] == '_' or loc[lang.len] == '@')) {
+            return loc;
+        }
+    }
+    return null;
+}
+
+pub fn lookupMo(mo_bytes: []const u8, msgid: [*:0]const u8) ?[*:0]const u8 {
+    if (mo_bytes.len < 28) return null;
+    const magic = std.mem.readInt(u32, mo_bytes[0..4], .little);
+    if (magic != 0x950412de) return null;
+    const count = std.mem.readInt(u32, mo_bytes[8..12], .little);
+    const orig_table_off = std.mem.readInt(u32, mo_bytes[12..16], .little);
+    const trans_table_off = std.mem.readInt(u32, mo_bytes[16..20], .little);
+    if (count == 0) return null;
+    if (@as(u64, orig_table_off) + @as(u64, count) * 8 > mo_bytes.len) return null;
+    if (@as(u64, trans_table_off) + @as(u64, count) * 8 > mo_bytes.len) return null;
+
+    const needle = std.mem.sliceTo(msgid, 0);
+    var lo: usize = 0;
+    var hi: usize = count;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        const entry_off = orig_table_off + mid * 8;
+        const orig_len = std.mem.readInt(u32, mo_bytes[entry_off..][0..4], .little);
+        const orig_str_off = std.mem.readInt(u32, mo_bytes[entry_off + 4 ..][0..4], .little);
+        if (@as(u64, orig_str_off) + @as(u64, orig_len) >= mo_bytes.len) return null;
+        const cand = mo_bytes[orig_str_off .. orig_str_off + orig_len];
+        switch (std.mem.order(u8, needle, cand)) {
+            .lt => hi = mid,
+            .gt => lo = mid + 1,
+            .eq => {
+                const t_entry_off = trans_table_off + mid * 8;
+                const t_len = std.mem.readInt(u32, mo_bytes[t_entry_off..][0..4], .little);
+                const t_str_off = std.mem.readInt(u32, mo_bytes[t_entry_off + 4 ..][0..4], .little);
+                if (t_len == 0) return null;
+                if (@as(u64, t_str_off) + @as(u64, t_len) >= mo_bytes.len) return null;
+                if (mo_bytes[t_str_off + t_len] != 0) return null;
+                return @ptrCast(mo_bytes.ptr + t_str_off);
+            },
+        }
+    }
+    return null;
+}
+
 /// Set the global gettext domain to our bundle ID, allowing unqualified
 /// `gettext` (`_`) calls to look up translations for our application.
 ///
 /// This should only be called for apprts that are fully owning the
 /// Ghostty application. This should not be called for libghostty users.
 pub fn initGlobalDomain() error{OutOfMemory}!void {
-    if (comptime !build_config.i18n) return;
+    if (comptime !build_config.i18n or builtin.target.os.tag == .windows) return;
     _ = textdomain(build_config.bundle_id) orelse return error.OutOfMemory;
 }
 
@@ -69,6 +209,10 @@ pub fn initGlobalDomain() error{OutOfMemory}!void {
 pub fn _(msgid: [*:0]const u8) [*:0]const u8 {
     if (comptime !build_config.i18n) return msgid;
     if (@inComptime()) return msgid;
+    if (comptime builtin.target.os.tag == .windows) {
+        const mo = windows_mo_data orelse return msgid;
+        return lookupMo(mo, msgid) orelse msgid;
+    }
     return dgettext(build_config.bundle_id, msgid);
 }
 
@@ -95,15 +239,30 @@ pub fn N_(msgid: [:0]const u8) [:0]const u8 {
 /// their own canonicalization logic:
 ///
 /// https://github.com/coreutils/gnulib/blob/5b92dd0a45c8d27f13a21076b57095ea5e220870/lib/localename.c#L1171
+fn normalizeLocale(
+    buf: []u8,
+    locale: []const u8,
+) error{NoSpaceLeft}![:0]const u8 {
+    if (fixZhLocale(locale)) |fixed| {
+        if (buf.len < fixed.len + 1) return error.NoSpaceLeft;
+        @memcpy(buf[0..fixed.len], fixed);
+        buf[fixed.len] = 0;
+        return buf[0..fixed.len :0];
+    }
+    if (buf.len < locale.len + 1) return error.NoSpaceLeft;
+    for (locale, 0..) |ch, i| {
+        buf[i] = if (ch == '-') '_' else ch;
+    }
+    buf[locale.len] = 0;
+    return buf[0..locale.len :0];
+}
+
 pub fn canonicalizeLocale(
     buf: []u8,
     locale: []const u8,
 ) error{NoSpaceLeft}![:0]const u8 {
-    if (comptime !build_config.i18n) {
-        if (buf.len < locale.len + 1) return error.NoSpaceLeft;
-        @memcpy(buf[0..locale.len], locale);
-        buf[locale.len] = 0;
-        return buf[0..locale.len :0];
+    if (comptime !build_config.i18n or builtin.target.os.tag == .windows) {
+        return normalizeLocale(buf, locale);
     }
 
     // Fix zh locales for macOS
@@ -207,4 +366,43 @@ test "_ returns msgid at comptime" {
 
     const msgid = comptime @"_"("Ghostty");
     try testing.expectEqualStrings("Ghostty", std.mem.span(msgid));
+}
+
+test "matchSupportedLocale" {
+    const testing = std.testing;
+    try testing.expectEqualStrings("ja", matchSupportedLocale("ja_JP.UTF-8").?);
+    try testing.expectEqualStrings("de", matchSupportedLocale("de-DE").?);
+    try testing.expectEqualStrings("zh_CN", matchSupportedLocale("zh-Hans-CN").?);
+    try testing.expectEqualStrings("zh_TW", matchSupportedLocale("zh-Hant-TW").?);
+    try testing.expectEqualStrings("pt_BR", matchSupportedLocale("pt_BR.UTF-8").?);
+    try testing.expect(matchSupportedLocale("en_US.UTF-8") == null);
+    try testing.expect(matchSupportedLocale("C") == null);
+}
+
+test "lookupMo binary catalog search" {
+    const testing = std.testing;
+    const po2mo = @import("../build/po2mo.zig");
+    const sample_po =
+        \\msgid ""
+        \\msgstr ""
+        \\"Content-Type: text/plain; charset=UTF-8\n"
+        \\
+        \\msgid "Close"
+        \\msgstr "閉じる"
+        \\
+        \\msgid "Copy"
+        \\msgstr "コピー"
+        \\
+        \\#, fuzzy
+        \\msgid "FuzzyId"
+        \\msgstr "ShouldBeSkipped"
+        \\
+    ;
+    const mo_bytes = try po2mo.compilePoToMo(testing.allocator, sample_po);
+    defer testing.allocator.free(mo_bytes);
+
+    try testing.expectEqualStrings("閉じる", std.mem.span(lookupMo(mo_bytes, "Close").?));
+    try testing.expectEqualStrings("コピー", std.mem.span(lookupMo(mo_bytes, "Copy").?));
+    try testing.expect(lookupMo(mo_bytes, "FuzzyId") == null);
+    try testing.expect(lookupMo(mo_bytes, "NonExistent") == null);
 }

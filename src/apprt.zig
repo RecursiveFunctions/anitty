@@ -59,4 +59,5 @@ test {
     _ = runtime;
     _ = action;
     _ = structs;
+    _ = win32.updater;
 }

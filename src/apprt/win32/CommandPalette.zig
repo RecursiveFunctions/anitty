@@ -64,9 +64,6 @@ fn scale(v: i32, dpi: c.UINT) i32 {
 pub fn isActionSupported(action: input.Binding.Action) bool {
     return switch (action) {
         .toggle_secure_input,
-        .check_for_updates,
-        .redo,
-        .undo,
         .show_gtk_inspector,
         => false,
         else => true,
@@ -243,6 +240,7 @@ fn populate(self: *CommandPalette, alloc: Allocator) !void {
     const app = self.window().app;
 
     for (app.core_app.surfaces.items, 0..) |surface, idx| {
+        if (surface.detached) continue;
         const eff = surface.getEffectiveTitle() orelse "Untitled";
         const title = try std.fmt.allocPrintSentinel(arena, "Focus: {s}", .{eff}, 0);
         const pwd = surface.getPwd() orelse "";

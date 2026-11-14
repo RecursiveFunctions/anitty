@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: release-windows-${{ github.ref }}
@@ -108,6 +109,19 @@ jobs:
       - name: Test
         run: zig build test -Dapp-runtime=win32
 
+      - name: Sign executable
+        shell: pwsh
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+        run: ./dist/windows/sign-file.ps1 -FilePath build/release/bin/ghostty.exe
+
       - name: Package zip
         shell: pwsh
         run: ./dist/windows/make-zip.ps1 -Prefix build/release -Version $env:VERSION
@@ -122,6 +136,19 @@ jobs:
           }
           & $iscc "/DAppVersion=$env:VERSION" "/DSourceDir=$PWD\dist\windows\out\staging\ghostty" "/DOutputDir=$PWD\dist\windows\out" dist\windows\installer\ghostty.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
+
+      - name: Sign installer
+        shell: pwsh
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+        run: ./dist/windows/sign-file.ps1 -FilePath "dist/windows/out/ghostty-$env:VERSION-windows-x86_64-setup.exe"
 
       - name: Collect assets
         shell: pwsh
@@ -146,7 +173,12 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $env:TAG @files --repo $env:REPOSITORY --clobber
           } else {
-            $notes = "Ghostty for Windows $env:VERSION, an unofficial community port of [Ghostty](https://github.com/ghostty-org/ghostty).`n`n> [!IMPORTANT]`n> **Do not report Windows bugs to upstream ``ghostty-org/ghostty``.** Report all Windows issues and crash reports at [RecursiveFunctions/ghostty-windows/issues](https://github.com/RecursiveFunctions/ghostty-windows/issues).`n`n**Install:** download ``Ghostty-Windows-Setup-x64.exe`` and run it (per-user, no admin needed).`n**Portable:** unzip ``Ghostty-Windows-x64.zip`` and run ``ghostty\bin\ghostty.exe``.`n`nThe binaries are not code-signed yet, so Windows SmartScreen may ask you to confirm (More info, then Run anyway). Verify downloads against ``SHA256SUMS.txt``.`n`n**Provenance & AI Disclosure:** Built on [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) with initial Win32 runtime foundation from [phalladar/ghostty-windows](https://github.com/phalladar/ghostty-windows). The Zig 0.17 / Ghostty 1.4.1-dev port, CI pipeline, and Win32 feature parity implementation were developed with AI assistance using Kilo Code (see ``README-windows.md`` for full details)."
+            $signingNotice = if ($env:CODESIGNED -eq 'true') {
+              "All release binaries and the installer are Authenticode code-signed and SHA-256 checksums are published in ``SHA256SUMS.txt``. You can also upgrade in-place via **Command Palette → Check for Updates**."
+            } else {
+              "If this build was produced without a code-signing certificate configured, Windows SmartScreen may ask you to confirm (More info, then Run anyway). Verify downloads against ``SHA256SUMS.txt``, or upgrade in-place via **Command Palette → Check for Updates**."
+            }
+            $notes = "Ghostty for Windows $env:VERSION, an unofficial community port of [Ghostty](https://github.com/ghostty-org/ghostty).`n`n> [!IMPORTANT]`n> **Do not report Windows bugs to upstream ``ghostty-org/ghostty``.** Report all Windows issues and crash reports at [RecursiveFunctions/ghostty-windows/issues](https://github.com/RecursiveFunctions/ghostty-windows/issues).`n`n**Install:** download ``Ghostty-Windows-Setup-x64.exe`` and run it (per-user, no admin needed).`n**Portable:** unzip ``Ghostty-Windows-x64.zip`` and run ``ghostty\bin\ghostty.exe``.`n**In-App Update:** run ``Check for Updates`` from the Command Palette (`ctrl+shift+p`) to automatically download, SHA-256 verify, and install updates.`n`n$signingNotice`n`n**Provenance & AI Disclosure:** Built on [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) with initial Win32 runtime foundation from [phalladar/ghostty-windows](https://github.com/phalladar/ghostty-windows). The Zig 0.17 / Ghostty 1.4.1-dev port, CI pipeline, and Win32 feature parity implementation were developed with AI assistance using Kilo Code (see ``README-windows.md`` for full details)."
             gh release create $env:TAG @files --repo $env:REPOSITORY --target $env:TARGET_SHA --title "Ghostty for Windows $env:VERSION" --notes $notes
           }
           if ($LASTEXITCODE -ne 0) { throw "gh release failed with $LASTEXITCODE" }

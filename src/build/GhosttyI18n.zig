@@ -16,10 +16,20 @@ steps: []*std.Build.Step,
 update_step: *std.Build.Step,
 
 pub fn init(b: *std.Build, cfg: *const Config) !GhosttyI18n {
-    _ = cfg;
-
     var steps: std.ArrayList(*std.Build.Step) = .empty;
     defer steps.deinit(b.allocator);
+
+    const po2mo = if (cfg.target.result.os.tag == .windows or builtin.os.tag == .windows)
+        b.addExecutable(.{
+            .name = "po2mo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/build/po2mo.zig"),
+                .target = b.graph.host,
+                .optimize = .ReleaseFast,
+            }),
+        })
+    else
+        null;
 
     inline for (locales) |locale| {
         // There is no encoding suffix in the LC_MESSAGES path on FreeBSD,
@@ -30,11 +40,18 @@ pub fn init(b: *std.Build, cfg: *const Config) !GhosttyI18n {
         else
             locale;
 
-        const msgfmt = b.addSystemCommand(&.{ "msgfmt", "-o", "-" });
-        msgfmt.addFileArg(b.path("po/" ++ locale ++ ".po"));
+        const mo_lazy = if (po2mo) |tool| blk: {
+            const run = b.addRunArtifact(tool);
+            run.addFileArg(b.path("po/" ++ locale ++ ".po"));
+            break :blk run.addOutputFileArg(locale ++ "-" ++ domain ++ ".mo");
+        } else blk: {
+            const msgfmt = b.addSystemCommand(&.{ "msgfmt", "-o", "-" });
+            msgfmt.addFileArg(b.path("po/" ++ locale ++ ".po"));
+            break :blk msgfmt.captureStdOut(.{});
+        };
 
         try steps.append(b.allocator, &b.addInstallFile(
-            msgfmt.captureStdOut(.{}),
+            mo_lazy,
             std.fmt.comptimePrint(
                 "share/locale/{s}/LC_MESSAGES/{s}.mo",
                 .{ target_locale, domain },

@@ -59,8 +59,16 @@ pub const Palette = struct {
     separator: c.COLORREF,
 
     pub fn init(config: *const configpkg.Config) Palette {
-        const bg = config.background;
-        const fg = config.foreground;
+        return initWithDynamic(config, null, null);
+    }
+
+    pub fn initWithDynamic(
+        config: *const configpkg.Config,
+        dynamic_bg: ?configpkg.Config.Color,
+        dynamic_fg: ?configpkg.Config.Color,
+    ) Palette {
+        const bg = dynamic_bg orelse config.background;
+        const fg = dynamic_fg orelse config.foreground;
         const dark = Window.Chrome.isDark(bg);
         const bar = mix(bg, if (dark) .{ .r = 0, .g = 0, .b = 0 } else fg, if (dark) 0.35 else 0.08);
         return .{
@@ -232,7 +240,12 @@ fn paint(self: *TabBar, hwnd: c.HWND) void {
 
 fn draw(self: *TabBar, hdc: c.HDC, rect: c.RECT) void {
     const win = self.window();
-    const palette: Palette = .init(&win.app.config);
+    const active_surf = win.activeSurface();
+    const palette: Palette = .initWithDynamic(
+        &win.app.config,
+        if (active_surf) |s| s.dynamic_bg else null,
+        if (active_surf) |s| s.dynamic_fg else null,
+    );
     const layout = Layout.init(self) orelse return;
 
     fill(hdc, rect, palette.bar);

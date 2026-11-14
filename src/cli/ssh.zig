@@ -278,10 +278,11 @@ fn runInner(
     } = session: {
         if (!opts.terminfo) break :session .{ .term = "xterm-256color" };
 
-        const dest = resolveDestination(alloc, opts.ssh, opts._ssh_args.items) orelse {
+        const resolved = resolveDestination(alloc, opts.ssh, opts._ssh_args.items) orelse {
             warnPrint(stderr, "could not resolve ssh destination; skipping terminfo install", .{});
             break :session .{ .term = "xterm-256color" };
         };
+        const dest = resolved.destination;
 
         const cache: ?DiskCache = if (opts.cache) cache: {
             const path = DiskCache.defaultPath(alloc, "ghostty") catch |err| {
@@ -313,6 +314,11 @@ fn runInner(
             }
         } else {
             verbosePrint(opts, stderr, "dest: {s} (cache disabled, will install)", .{dest});
+        }
+
+        if (resolved.skip_install) {
+            verbosePrint(opts, stderr, "dest: {s} (non-interactive session, skipping install)", .{dest});
+            break :session .{ .term = "xterm-256color" };
         }
 
         stderr.print("Setting up xterm-ghostty terminfo on {s}...\n", .{dest}) catch {};
@@ -462,14 +468,18 @@ fn checkExit(term: std.process.Child.Term, label: []const u8) error{ChildFailed}
     }
 }
 
-/// Run `ssh -G <args>` and parse the output for `user` and `hostname`.
-/// Returns the resolved `user@hostname`, or null if the destination
-/// could not be resolved.
+const ResolvedConfig = struct {
+    destination: []const u8,
+    skip_install: bool = false,
+};
+
+/// Run `ssh -G <args>` and parse the output for `user`, `hostname`, `port`,
+/// and non-interactive session flags.
 fn resolveDestination(
     alloc: Allocator,
     ssh: []const u8,
     args: []const []const u8,
-) ?[]const u8 {
+) ?ResolvedConfig {
     const argv = std.mem.concat(alloc, []const u8, &.{
         &.{ ssh, "-G" },
         args,
@@ -483,7 +493,7 @@ fn resolveDestination(
         return null;
     };
     checkExit(result.term, "ssh -G") catch return null;
-    return parseDestination(alloc, result.stdout);
+    return parseSshConfig(alloc, result.stdout);
 }
 
 /// Parse `ssh -G` output for `user`, `hostname` and `port` and return the
@@ -492,10 +502,15 @@ fn resolveDestination(
 /// different sshd instances behind one address are cached separately.
 /// Returns null if user or hostname is missing or formatting fails.
 fn parseDestination(alloc: Allocator, stdout: []const u8) ?[]const u8 {
+    return if (parseSshConfig(alloc, stdout)) |cfg| cfg.destination else null;
+}
+
+fn parseSshConfig(alloc: Allocator, stdout: []const u8) ?ResolvedConfig {
     var user: []const u8 = "";
     var host: []const u8 = "";
     var port: []const u8 = "";
-    var it = std.mem.tokenizeScalar(u8, stdout, '\n');
+    var skip_install = false;
+    var it = std.mem.tokenizeAny(u8, stdout, "\r\n");
     while (it.next()) |line| {
         const space = std.mem.indexOfScalar(u8, line, ' ') orelse continue;
         const key = line[0..space];
@@ -506,8 +521,15 @@ fn parseDestination(alloc: Allocator, stdout: []const u8) ?[]const u8 {
             host = value;
         } else if (std.mem.eql(u8, key, "port")) {
             port = value;
+        } else if (std.mem.eql(u8, key, "sessiontype")) {
+            if (std.ascii.eqlIgnoreCase(value, "none")) skip_install = true;
+        } else if (std.mem.eql(u8, key, "requesttty")) {
+            if (std.ascii.eqlIgnoreCase(value, "no")) skip_install = true;
+        } else if (std.mem.eql(u8, key, "stdinnull")) {
+            if (std.ascii.eqlIgnoreCase(value, "yes")) skip_install = true;
+        } else if (std.mem.eql(u8, key, "forkafterauthentication")) {
+            if (std.ascii.eqlIgnoreCase(value, "yes")) skip_install = true;
         }
-        if (user.len > 0 and host.len > 0 and port.len > 0) break;
     }
 
     if (user.len == 0) {
@@ -519,19 +541,49 @@ fn parseDestination(alloc: Allocator, stdout: []const u8) ?[]const u8 {
         return null;
     }
 
-    if (port.len == 0 or std.mem.eql(u8, port, "22")) {
-        return alloc.print("{s}@{s}", .{ user, host }) catch null;
-    }
+    const destination = if (port.len == 0 or std.mem.eql(u8, port, "22"))
+        alloc.print("{s}@{s}", .{ user, host }) catch return null
+    else if (std.mem.indexOfScalar(u8, host, ':') != null)
+        alloc.print("{s}@[{s}]:{s}", .{ user, host, port }) catch return null
+    else
+        alloc.print("{s}@{s}:{s}", .{ user, host, port }) catch return null;
 
-    if (std.mem.indexOfScalar(u8, host, ':') != null) {
-        return alloc.print("{s}@[{s}]:{s}", .{ user, host, port }) catch null;
-    }
-    return alloc.print("{s}@{s}:{s}", .{ user, host, port }) catch null;
+    return .{
+        .destination = destination,
+        .skip_install = skip_install,
+    };
 }
 
-/// Install Ghostty's terminfo on the remote host over a short-lived SSH
-/// ControlMaster connection. The master tears down with the client
-/// (`ControlPersist=no`) so no socket lingers.
+/// Return the slice of `args` up through and including the SSH destination,
+/// stripping any trailing remote command and its arguments.
+fn sshArgsThroughDestination(args: []const []const u8) []const []const u8 {
+    const arg_taking_flags = "BbcDEeFIiJLlmOopPQRSWw";
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--")) {
+            return if (i + 1 < args.len) args[0 .. i + 2] else args;
+        }
+        if (arg.len > 1 and arg[0] == '-') {
+            var consumes_next = false;
+            for (arg[1..], 1..) |ch, idx| {
+                if (std.mem.indexOfScalar(u8, arg_taking_flags, ch) != null) {
+                    if (idx == arg.len - 1) consumes_next = true;
+                    break;
+                }
+            }
+            if (consumes_next and i + 1 < args.len) i += 1;
+            continue;
+        }
+        return args[0 .. i + 1];
+    }
+    return args;
+}
+
+/// Install Ghostty's terminfo on the remote host. On POSIX platforms this
+/// uses a short-lived SSH ControlMaster connection (`ControlPersist=no`);
+/// on Windows (where Win32-OpenSSH does not support ControlMaster) it runs
+/// a direct non-interactive SSH command.
 fn installRemoteTerminfo(
     alloc: Allocator,
     opts: *const Options,
@@ -541,16 +593,6 @@ fn installRemoteTerminfo(
     defer buf.deinit();
     try terminfopkg.ghostty.encode(&buf.writer);
     const terminfo = buf.written();
-
-    // ControlPath is in TMPDIR with a short, random basename. ssh uses
-    // ControlPath as the bind address for a Unix domain socket; macOS
-    // limits sockaddr_un.sun_path to ~104 bytes, so keeping the path
-    // short leaves margin.
-    const control_path = try internal_os.randomTmpPath(alloc, "ghostty-ssh-");
-    const control_path_opt = try alloc.print(
-        "ControlPath={s}",
-        .{control_path},
-    );
 
     // Keep SSH authentication messages visible, including keyboard-interactive
     // instructions while stdin carries terminfo. Only remote installer stderr
@@ -563,18 +605,37 @@ fn installRemoteTerminfo(
     else
         "sh -c 'tic -x -o ~/.terminfo - 2>/dev/null && infocmp -x xterm-ghostty >/dev/null 2>&1'";
 
-    // Set up an SSH ControlMaster scoped to this single install:
-    //   - ControlMaster=yes makes our client also act as the master.
-    //   - ControlPersist=no tears the master down when our client
-    //     exits; no socket lingers on the remote side.
-    const argv = try std.mem.concat(alloc, []const u8, &.{
-        &.{opts.ssh},
-        &.{
+    const control_opts: []const []const u8 = if (comptime builtin.target.os.tag == .windows)
+        &.{}
+    else blk: {
+        // ControlPath is in TMPDIR with a short, random basename. ssh uses
+        // ControlPath as the bind address for a Unix domain socket; macOS
+        // limits sockaddr_un.sun_path to ~104 bytes, so keeping the path
+        // short leaves margin.
+        const control_path = try internal_os.randomTmpPath(alloc, "ghostty-ssh-");
+        const control_path_opt = try alloc.print(
+            "ControlPath={s}",
+            .{control_path},
+        );
+        break :blk &.{
             "-o", "ControlMaster=yes",
             "-o", "ControlPersist=no",
             "-o", control_path_opt,
+        };
+    };
+
+    const dest_args = sshArgsThroughDestination(opts._ssh_args.items);
+    const argv = try std.mem.concat(alloc, []const u8, &.{
+        &.{opts.ssh},
+        &.{
+            "-T",
+            "-o",
+            "ClearAllForwardings=yes",
+            "-o",
+            "RemoteCommand=none",
         },
-        opts._ssh_args.items,
+        control_opts,
+        dest_args,
         &.{remote_script},
     });
     verbosePrint(opts, stderr, "exec: {f}", .{Joined{ .items = argv }});
@@ -777,5 +838,62 @@ test "parseDestination: result is a valid cache key" {
     for (outputs) |stdout| {
         const result = parseDestination(arena.allocator(), stdout).?;
         try testing.expect(DiskCache.isValidCacheKey(result));
+    }
+}
+
+test "parseSshConfig: Windows CRLF output and non-interactive flags" {
+    const testing = std.testing;
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    {
+        const crlf = "user alice\r\nhostname example.com\r\nport 22\r\n";
+        const cfg = parseSshConfig(arena.allocator(), crlf).?;
+        try testing.expectEqualStrings("alice@example.com", cfg.destination);
+        try testing.expect(!cfg.skip_install);
+        try testing.expect(DiskCache.isValidCacheKey(cfg.destination));
+    }
+    {
+        const no_tty = "user alice\nhostname example.com\nport 22\nrequesttty no\n";
+        const cfg = parseSshConfig(arena.allocator(), no_tty).?;
+        try testing.expectEqualStrings("alice@example.com", cfg.destination);
+        try testing.expect(cfg.skip_install);
+    }
+    {
+        const no_session = "user alice\nhostname example.com\nsessiontype none\n";
+        const cfg = parseSshConfig(arena.allocator(), no_session).?;
+        try testing.expect(cfg.skip_install);
+    }
+    {
+        const stdin_null = "user alice\nhostname example.com\nstdinnull yes\n";
+        const cfg = parseSshConfig(arena.allocator(), stdin_null).?;
+        try testing.expect(cfg.skip_install);
+    }
+    {
+        const fork_after = "user alice\nhostname example.com\nforkafterauthentication yes\n";
+        const cfg = parseSshConfig(arena.allocator(), fork_after).?;
+        try testing.expect(cfg.skip_install);
+    }
+}
+
+test "sshArgsThroughDestination: strips trailing remote command" {
+    const testing = std.testing;
+    {
+        const args = [_][]const u8{ "-p", "2222", "-i", "~/.ssh/id_ed25519", "user@example.com", "tmux", "attach" };
+        const stripped = sshArgsThroughDestination(&args);
+        try testing.expectEqual(@as(usize, 5), stripped.len);
+        try testing.expectEqualStrings("user@example.com", stripped[4]);
+    }
+    {
+        const args = [_][]const u8{ "-vvp2222", "-o", "ForwardAgent=yes", "user@example.com", "ls -la" };
+        const stripped = sshArgsThroughDestination(&args);
+        try testing.expectEqual(@as(usize, 4), stripped.len);
+        try testing.expectEqualStrings("user@example.com", stripped[3]);
+    }
+    {
+        const args = [_][]const u8{ "--", "user@example.com", "uptime" };
+        const stripped = sshArgsThroughDestination(&args);
+        try testing.expectEqual(@as(usize, 2), stripped.len);
+        try testing.expectEqualStrings("user@example.com", stripped[1]);
     }
 }

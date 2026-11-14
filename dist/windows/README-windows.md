@@ -15,7 +15,7 @@ In accordance with Ghostty's [`AI_POLICY.md`](../../AI_POLICY.md), this section 
 
 - **Upstream Base:** Built on [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) by Mitchell Hashimoto and contributors.
 - **Win32 Runtime Foundation:** Initial Win32 runtime (`src/apprt/win32/`), WGL OpenGL provider (`src/renderer/opengl/wgl.zig`), and Windows packaging scripts were derived from [`phalladar/ghostty-windows`](https://github.com/phalladar/ghostty-windows) by Josh Auriemma.
-- **AI Assistance Disclosure:** The Zig 0.17 / Ghostty 1.4.1-dev rebase and port, automated CI release pipeline, and Win32 feature parity implementation (search overlay, command palette, tab overview, quick terminal, global hotkeys, DWM backdrop/transparency, unfocused split dimming, `bell-features = border`, and Dear ImGui terminal inspector) were developed with AI assistance using **Kilo Code**, with human review, build verification, and runtime testing.
+- **AI Assistance Disclosure:** The Zig 0.17 / Ghostty 1.4.1-dev rebase and port, automated CI release pipeline, and Win32 feature parity implementation (search overlay, command palette, tab overview, quick terminal, global hotkeys, DWM backdrop/transparency, dynamic OSC 10/11 chrome colors, live-session `undo`/`redo`, `check_for_updates`, `ghostty +ssh` remote terminfo auto-install, WinRT toast notifications, Windows `.mo` localization, unfocused split dimming, `bell-features = border`, and Dear ImGui terminal inspector) were developed with AI assistance using **Kilo Code**, with human review, build verification, and runtime testing.
 
 ## Requirements
 
@@ -38,6 +38,7 @@ ghostty\
   bin\ghostty.exe
   share\ghostty\themes\...
   share\ghostty\shell-integration\...
+  share\locale\...\LC_MESSAGES\com.mitchellh.ghostty.mo
   share\terminfo\ghostty.terminfo
   LICENSE
   README-windows.md
@@ -129,8 +130,10 @@ value is split on whitespace and backslashes act as escape characters, so
 write paths with forward slashes (`command = C:/msys64/usr/bin/fish.exe -l`)
 or use the `direct:` prefix.
 
-Shells see `TERM=xterm-256color`. The Ghostty terminfo entry is shipped as
-a source file only and is not installed.
+Shells see `TERM=xterm-256color` locally. When connecting to remote hosts via
+`ghostty +ssh` (or via `ssh` in PowerShell, Bash, Zsh, Fish, Elvish, or Nushell
+with `shell-integration-features = ssh-env,ssh-terminfo`), Ghostty automatically
+compiles and caches the `xterm-ghostty` terminfo entry on the remote machine.
 
 Shell integration is injected automatically for PowerShell 7, Windows
 PowerShell 5.1 and `cmd.exe`. PowerShell gets prompt marks, exit codes,
@@ -204,9 +207,10 @@ the same build, so keep it if you build Ghostty yourself.
 
 ## Troubleshooting
 
-- **SmartScreen warns about the installer or `ghostty.exe`.** Releases
-  built by this process are not code signed (see
-  [Code signing](#code-signing)). Choose "More info", then "Run anyway".
+- **SmartScreen warns about the installer or `ghostty.exe`.** If a build was
+  produced without code-signing secrets configured (see
+  [Code signing & automatic in-app updates](#code-signing--automatic-in-app-updates)),
+  choose "More info", then "Run anyway".
 - **Ghostty exits at start or shows no window.** Capture a log (see
   [Logs](#logs)) and look for OpenGL errors. Ghostty needs OpenGL 4.3; update
   the GPU driver, or see the remote desktop entry under
@@ -243,9 +247,12 @@ clipboard` to copy selections to the clipboard.
 - **Elevated and non-elevated instances** cannot talk to each other
   (`+new-tab`, `+new-window`), because Windows blocks the message from a
   lower integrity level.
-- **`ghostty +ssh`** cannot install terminfo on the remote host: it relies
-  on ssh `ControlMaster`, which Windows OpenSSH does not support. Plain
-  `ssh` works; the remote side sees `TERM=xterm-256color`.
+- **Secure Input (`toggle_secure_input` / `auto-secure-input`)** is not
+  available on Windows: unlike macOS (`EnableSecureEventInput`), standard
+  user-mode Win32 processes cannot block same-integrity-level `WH_KEYBOARD_LL`
+  hooks or `GetAsyncKeyState` polling without an Authenticode-signed
+  `uiAccess="true"` manifest installed under `Program Files` or a kernel
+  driver.
 - The "Open Ghostty here" entry only appears under "Show more options".
 - **Resizing without the bundled ConPTY** (`conpty.dll` and
   `OpenConsole.exe` missing from the `bin` folder) loses lines at the top
@@ -259,14 +266,10 @@ Not implemented yet:
   Reports are welcome.
 - **Color emoji** use the bundled Noto Color Emoji font. Segoe UI Emoji
   (COLR color font) is found but renders in grayscale if selected.
-- **Desktop notifications** are shown as tray balloons, not WinRT toasts,
-  so they have no actions and are hidden while Focus Assist is on.
 - **OSC 8 links** open only `http`, `https`, `mailto` and local `file`
   URLs (folders and non-executable files); other schemes are refused.
-- **Localization**: the UI is English only (i18n is not built on
-  Windows).
 - `.fon` bitmap fonts are not listed.
-- No code signing and no winget package. Only x86_64 builds are produced.
+- No winget package yet (see [Roadmap](#roadmap)). Only x86_64 builds are produced.
 
 ## Building a release
 
@@ -318,26 +321,41 @@ The installer packages whatever `bin\` holds in the staged tree. Version
 resynchronise the cursor with the terminal after a resize. For a dev
 build, copy the two files into `zig-out\bin`.
 
-## Code signing
+## Code signing & automatic in-app updates
 
-Nothing is signed by this process, so SmartScreen warns on first run of
-the installer and the executable. To sign a release, sign `ghostty.exe`
-before running `make-zip.ps1`, then sign the setup program and its
-uninstaller:
+### Automatic in-app updates (`check_for_updates`)
 
-```
-signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f cert.pfx /p <password> build\release\bin\ghostty.exe
-```
+Open the Command Palette (`ctrl+shift+p`) and run **Check for Updates**. Ghostty queries the GitHub Releases API over `WinHTTP`:
 
-For the installer, register the same command as an Inno Setup sign tool
-(`ISCC.exe "/Ssigntool=signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f cert.pfx /p <password> $f" ...`)
-and add `SignTool=signtool` to the `[Setup]` section so both
-`setup.exe` and `unins000.exe` are signed. An OV or EV code signing
-certificate (or Azure Trusted Signing) is needed for SmartScreen
-reputation.
+1. Detects whether Ghostty is running from an **Inno Setup installation** (`unins000.exe` present in the parent directory) or a **Portable ZIP** layout (`share\ghostty` present without `unins000.exe`).
+2. When a newer release is available and you click **Install & Restart**, Ghostty downloads `SHA256SUMS.txt` and the matching asset (`Ghostty-Windows-Setup-x64.exe` or `Ghostty-Windows-x64.zip`) into `%TEMP%\ghostty-update-<tick>`.
+3. Verifies the downloaded file's SHA-256 digest against `SHA256SUMS.txt` before executing or extracting anything.
+4. Applies the update:
+   - **Installer mode:** Launches `Ghostty-Windows-Setup-x64.exe /SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NOCANCEL /SP-` and exits so the installer upgrades and relaunches Ghostty automatically.
+   - **Portable mode:** Extracts the verified ZIP, renames the running `ghostty.exe` to `ghostty.exe.old` (cleaned up on next launch), copies the updated tree into the portable folder after exit, and restarts `ghostty.exe`.
 
-## winget
+### Code signing (`dist/windows/sign-file.ps1`)
 
-A winget manifest can point at the setup program later with
-`InstallerType: inno`, `Scope: user`, and the silent switches above. No
-manifest is submitted yet.
+The release workflow (`.github/workflows/release-windows.yml`) signs `ghostty.exe` prior to `make-zip.ps1` and signs `ghostty-<version>-windows-x86_64-setup.exe` prior to generating `SHA256SUMS.txt` using `dist/windows/sign-file.ps1`.
+
+Two signing modes are supported via GitHub Actions repository secrets (or local environment variables):
+
+1. **Azure Trusted Signing (OIDC or Service Principal):**
+   Set `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`, and Azure credentials (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and OIDC or `AZURE_CLIENT_SECRET`). `sign-file.ps1` automatically fetches `Microsoft.Trusted.Signing.Client` (`Azure.CodeSigning.Dlib.dll`), signs with `http://timestamp.acs.microsoft.com`, and runs `signtool verify /pa`.
+2. **Base64 PFX Certificate:**
+   Set `WINDOWS_PFX_BASE64` and `WINDOWS_PFX_PASSWORD`. `sign-file.ps1` decodes the PFX to a temporary file, signs via `signtool.exe sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256`, verifies with `signtool verify /pa`, and securely removes the temporary PFX.
+
+If neither secret is configured (for example on unconfigured community forks), `sign-file.ps1` logs a notice and exits `0` so CI builds still succeed.
+
+## Roadmap
+
+- **Phase 1 (Shipped):**
+  - Prebuilt Authenticode signing pipeline (`dist/windows/sign-file.ps1` supporting Azure Trusted Signing OIDC and PFX certificates).
+  - SHA-256 verified automatic in-app updates (`check_for_updates`) for both Inno Setup installer and Portable ZIP installations.
+- **Phase 2 (Next):**
+  - **DirectX 11 / D3D12 + Microsoft WARP Software Fallback Renderer:** Support GPU-less virtual machines (Hyper-V, VMware, QEMU), Windows Sandbox, and Remote Desktop (RDP) sessions where the Microsoft Basic Render Driver does not provide OpenGL 4.3, plus native DirectComposition transparency and HDR.
+  - **WinGet Package (`microsoft/winget-pkgs`):** Automated manifest submission with `InstallerType: inno` and `Scope: user`.
+- **Phase 3 (Planned):**
+  - **Taskbar Jump Lists & Shell Auto-Discovery (`ICustomDestinationList`):** Jump List actions (_New Window_, _New Tab_, _Open Configuration_) and auto-discovered profiles for PowerShell 7, Windows PowerShell 5.1, `cmd.exe`, WSL distributions, Git Bash, and MSYS2.
+  - **Session Restore (`window-save-state`):** Persist and restore windows, tabs, splits, and working directories across restarts.
+  - **Windows UI Automation (`UIAutomationCore.dll`):** Screen-reader accessibility (`IRawElementProviderSimple` / `ITextProvider`) for Windows Narrator and NVDA.

@@ -295,9 +295,9 @@ pub fn init(b: *std.Build, versions: Versions) !Config {
     config.i18n = b.option(
         bool,
         "i18n",
-        "Enables gettext-based internationalization. Enabled by default only for macOS, and other Unix-like systems like Linux and FreeBSD when using glibc.",
+        "Enables gettext-based internationalization. Enabled by default only for macOS, Windows, and other Unix-like systems like Linux and FreeBSD when using glibc.",
     ) orelse switch (target.result.os.tag) {
-        .macos, .ios => true,
+        .macos, .ios, .windows => true,
         .linux, .freebsd => target.result.isGnuLibC(),
         else => false,
     };

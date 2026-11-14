@@ -2,6 +2,7 @@ const Surface = @This();
 
 const std = @import("std");
 const apprt = @import("../../apprt.zig");
+const configpkg = @import("../../config.zig");
 const global = @import("../../global.zig");
 const CoreSurface = @import("../../Surface.zig");
 const input = @import("../../input.zig");
@@ -23,6 +24,8 @@ core_surface: CoreSurface,
 app: *App,
 window: *Window,
 hwnd: ?c.HWND = null,
+ref_count: usize = 1,
+detached: bool = false,
 initialized: bool = false,
 size: apprt.SurfaceSize = .{ .width = 800, .height = 600 },
 content_scale: apprt.ContentScale = .{ .x = 1, .y = 1 },
@@ -31,6 +34,8 @@ title: ?[:0]const u8 = null,
 title_override: ?[:0]const u8 = null,
 pwd_path: ?[:0]const u8 = null,
 hover_url: ?[:0]const u8 = null,
+dynamic_bg: ?configpkg.Config.Color = null,
+dynamic_fg: ?configpkg.Config.Color = null,
 bell_ringing: bool = false,
 cell_size: apprt.action.CellSize = .{ .width = 0, .height = 0 },
 search_overlay: SearchOverlay = .{},
@@ -158,11 +163,39 @@ pub fn core(self: *Surface) *CoreSurface {
 }
 
 pub fn ref(self: *Surface) *Surface {
+    self.ref_count += 1;
     return self;
 }
 
 pub fn unref(self: *Surface) void {
-    _ = self;
+    std.debug.assert(self.ref_count > 0);
+    self.ref_count -= 1;
+    if (self.ref_count == 0) self.destroy();
+}
+
+pub fn detachFromWindow(self: *Surface) void {
+    self.detached = true;
+    if (self.inspector_window) |insp| insp.destroy();
+    self.setVisible(false);
+    if (self.hwnd) |hwnd| {
+        _ = c.ShowWindow(hwnd, c.SW_HIDE);
+        if (self.app.msg_hwnd) |msg_hwnd| {
+            _ = c.SetParent(hwnd, msg_hwnd);
+        }
+    }
+}
+
+pub fn attachToWindow(self: *Surface, target: *Window) void {
+    const target_hwnd = target.hwnd orelse return;
+    self.detached = false;
+    self.window = target;
+    if (self.hwnd) |hwnd| {
+        _ = c.SetParent(hwnd, target_hwnd);
+    }
+    const dpi = c.GetDpiForWindow(target_hwnd);
+    const scale = @as(f32, @floatFromInt(dpi)) / 96.0;
+    if (self.content_scale.x != scale) self.dpiChanged(dpi);
+    self.refresh();
 }
 
 pub fn rtApp(self: *const Surface) *App {
@@ -170,11 +203,13 @@ pub fn rtApp(self: *const Surface) *App {
 }
 
 pub fn close(self: *Surface, process_active: bool) void {
+    if (self.detached) return;
     if (process_active and !Window.confirmClose(self.window.hwnd)) return;
     self.window.closeSurface(self);
 }
 
 pub fn present(self: *Surface) void {
+    if (self.detached) return;
     self.window.selectSurface(self);
     if (self.window.hwnd) |hwnd| _ = c.SetForegroundWindow(hwnd);
     if (self.hwnd) |hwnd| _ = c.SetFocus(hwnd);
@@ -185,7 +220,21 @@ pub fn setTitle(self: *Surface, title: [:0]const u8) !void {
     const copy = try alloc.dupeSentinel(u8, title, 0);
     if (self.title) |v| alloc.free(v);
     self.title = copy;
-    self.window.surfaceTitleChanged(self);
+    if (!self.detached) self.window.surfaceTitleChanged(self);
+}
+
+pub fn setColorChange(self: *Surface, change: apprt.action.ColorChange) void {
+    const color: configpkg.Config.Color = .{
+        .r = change.r,
+        .g = change.g,
+        .b = change.b,
+    };
+    switch (change.kind) {
+        .background => self.dynamic_bg = color,
+        .foreground => self.dynamic_fg = color,
+        else => return,
+    }
+    if (!self.detached) self.window.surfaceColorChanged(self);
 }
 
 pub fn getTitle(self: *Surface) ?[:0]const u8 {
@@ -201,7 +250,7 @@ pub fn setTitleOverride(self: *Surface, title: [:0]const u8) !void {
     const copy: ?[:0]const u8 = if (title.len == 0) null else try alloc.dupeSentinel(u8, title, 0);
     if (self.title_override) |v| alloc.free(v);
     self.title_override = copy;
-    self.window.surfaceTitleChanged(self);
+    if (!self.detached) self.window.surfaceTitleChanged(self);
 }
 
 pub fn copyTitleToClipboard(self: *Surface) bool {
@@ -240,7 +289,7 @@ pub fn setCellSize(self: *Surface, width: u32, height: u32) void {
 pub fn setBellRinging(self: *Surface, ringing: bool) void {
     if (self.bell_ringing == ringing) return;
     self.bell_ringing = ringing;
-    self.window.surfaceBellChanged(self);
+    if (!self.detached) self.window.surfaceBellChanged(self);
 }
 
 pub fn getContentScale(self: *const Surface) !apprt.ContentScale {
@@ -609,7 +658,7 @@ fn confirmClipboard(self: *Surface, prompt: ClipboardPrompt, text: []const u8) b
     const wide = clipboard.utf16FromUtf8(alloc, message) catch return false;
     defer alloc.free(wide);
 
-    return dialogs.confirm(self.window.hwnd, .{
+    return dialogs.confirm(if (self.detached) null else self.window.hwnd, .{
         .main = title,
         .content = wide,
         .yes = L("Allow"),
@@ -815,7 +864,7 @@ pub fn wndProc(
 
         c.WM_SETFOCUS => {
             self.focusChanged(true);
-            self.window.surfaceFocused(self);
+            if (!self.detached) self.window.surfaceFocused(self);
             return 0;
         },
 

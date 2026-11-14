@@ -59,9 +59,11 @@ Source: "{#SourceDir}\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreve
 Source: "{#SourceDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
+Type: files; Name: "{app}\bin\ghostty.exe.old"
 Type: files; Name: "{app}\bin\conpty.dll"
 Type: files; Name: "{app}\bin\OpenConsole.exe"
 Type: filesandordirs; Name: "{app}\share\ghostty"
+Type: filesandordirs; Name: "{app}\share\locale"
 Type: filesandordirs; Name: "{app}\share\terminfo"
 
 [Icons]
@@ -81,3 +83,21 @@ Root: HKA; Subkey: "Software\Classes\Drive\shell\Ghostty\command"; ValueType: st
 
 [Run]
 Filename: "{app}\bin\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; WorkingDir: "{%USERPROFILE}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\bin\{#AppExe}"; WorkingDir: "{%USERPROFILE}"; Flags: nowait; Check: ShouldRelaunchAfterSilentInstall
+
+[Code]
+function ShouldRelaunchAfterSilentInstall: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  if not WizardSilent then Exit;
+  for I := 1 to ParamCount do
+  begin
+    if CompareText(ParamStr(I), '/RESTARTAPPLICATIONS') = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;

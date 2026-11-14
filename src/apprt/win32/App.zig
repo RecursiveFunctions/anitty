@@ -16,6 +16,8 @@ const CommandPalette = @import("CommandPalette.zig");
 const TabOverview = @import("TabOverview.zig");
 const QuickTerminal = @import("QuickTerminal.zig");
 const InspectorWindow = @import("InspectorWindow.zig");
+const UndoHistory = @import("UndoHistory.zig");
+const updater = @import("updater.zig");
 const hotkeyspkg = @import("hotkeys.zig");
 const taskbarpkg = @import("taskbar.zig");
 const dialogs = @import("dialogs.zig");
@@ -54,6 +56,7 @@ taskbar: taskbarpkg.State = .{},
 ipc: ipcpkg.Server = .{},
 hotkeys: hotkeyspkg.State = .{},
 quick_terminal: QuickTerminal = .{},
+undo_history: UndoHistory = .{},
 
 pub fn init(
     self: *App,
@@ -88,6 +91,7 @@ pub fn init(
     ) >= 0;
     errdefer if (self.com_initialized) c.CoUninitialize();
     _ = c.SetCurrentProcessExplicitAppUserModelID(L("com.mitchellh.ghostty"));
+    updater.cleanupOldExecutable();
 
     try registerClasses(instance);
     errdefer unregisterClasses(instance);
@@ -273,6 +277,7 @@ pub fn terminate(self: *App) void {
     self.quitting = true;
     self.quick_terminal.deinit(self);
     self.hotkeys.deinit(self.core_app.alloc, self.msg_hwnd);
+    self.undo_history.deinit(self);
     self.destroyAllWindows();
     self.disarmQuitTimer();
     self.windows.deinit(self.core_app.alloc);
@@ -343,6 +348,14 @@ fn messageWndProc(
             if (self.confirmTerminate(L("Close All Windows?"))) self.destroyAllWindows();
             return 0;
         },
+        updater.WM_GHOSTTY_UPDATE_RESULT => {
+            updater.handleResult(self, lparam);
+            return 0;
+        },
+        updater.WM_GHOSTTY_UPDATE_APPLY => {
+            updater.handleApply(self, lparam);
+            return 0;
+        },
         c.WM_HOTKEY => {
             _ = self.hotkeys.handle(self, @intCast(@as(isize, @bitCast(wparam))));
             return 0;
@@ -354,6 +367,9 @@ fn messageWndProc(
             return 0;
         } else if (wparam == QuickTerminal.timer_id) {
             self.quick_terminal.tickTimer(self);
+            return 0;
+        } else if (wparam == UndoHistory.timer_id) {
+            self.undo_history.tickTimer(self);
             return 0;
         },
         else => {},
@@ -367,6 +383,7 @@ pub fn quit(self: *App) void {
     self.quitting = true;
     log.debug("quitting", .{});
     self.disarmQuitTimer();
+    self.undo_history.deinit(self);
     self.destroyAllWindows();
     c.PostQuitMessage(0);
 }
@@ -433,6 +450,14 @@ fn presentWindow(hwnd: c.HWND) void {
 
 pub fn addWindow(self: *App, window: *Window) !void {
     try self.windows.append(self.core_app.alloc, window);
+    self.disarmQuitTimer();
+}
+
+pub fn canUndoCloseWindow(self: *const App) bool {
+    if (self.quitting) return false;
+    if (self.windows.items.len > 1) return true;
+    if (!self.config.@"quit-after-last-window-closed") return true;
+    return self.config.@"quit-after-last-window-closed-delay" != null;
 }
 
 pub fn removeWindow(self: *App, window: *Window) void {
@@ -445,8 +470,11 @@ pub fn removeWindow(self: *App, window: *Window) void {
     }
 
     if (self.windows.items.len > 0 or self.quitting) return;
-    if (self.config.@"quit-after-last-window-closed" and
-        self.config.@"quit-after-last-window-closed-delay" != null) return;
+    if (!self.config.@"quit-after-last-window-closed") return;
+    if (self.config.@"quit-after-last-window-closed-delay" != null) {
+        self.armQuitTimer();
+        return;
+    }
     self.quit();
 }
 
@@ -555,14 +583,16 @@ fn configChanged(self: *App, target: apprt.Target, config: *const Config) void {
             self.hotkeys.sync(self);
             for (self.windows.items) |window| window.applyChrome(chrome);
         },
-        .surface => |core_surface| core_surface.rt_surface.window.applyChrome(chrome),
+        .surface => |core_surface| if (!core_surface.rt_surface.detached) {
+            core_surface.rt_surface.window.applyChrome(chrome);
+        },
     }
 }
 
 fn targetSurface(target: apprt.Target) ?*Surface {
     return switch (target) {
         .app => null,
-        .surface => |v| v.rt_surface,
+        .surface => |v| if (v.rt_surface.detached) null else v.rt_surface,
     };
 }
 
@@ -874,7 +904,17 @@ pub fn performAction(
             return try dialogs.exportTerminalIO(surface, value.contents);
         },
 
-        .color_change,
+        .color_change => {
+            const surface = targetSurface(target) orelse return false;
+            surface.setColorChange(value);
+        },
+
+        .undo => return self.undo_history.undo(self),
+
+        .redo => return self.undo_history.redo(self),
+
+        .check_for_updates => return updater.checkForUpdates(self),
+
         .selection_changed,
         .secure_input,
         => log.debug("ignored action={t}", .{action}),

@@ -10,6 +10,7 @@ const TabBar = @import("TabBar.zig");
 const SplitView = @import("SplitView.zig");
 const CommandPalette = @import("CommandPalette.zig");
 const TabOverview = @import("TabOverview.zig");
+const UndoHistory = @import("UndoHistory.zig");
 const c = @import("c.zig");
 const dialogs = @import("dialogs.zig");
 
@@ -46,7 +47,7 @@ title_override: ?[:0]const u8 = null,
 bell_ringing: bool = false,
 fullscreen_saved: ?FullscreenSaved = null,
 
-const Tab = struct {
+pub const Tab = struct {
     tree: SplitView.Tree,
     focused: *Surface,
     title_override: ?[:0]const u8 = null,
@@ -67,6 +68,16 @@ pub const Chrome = struct {
         scheme: apprt.ColorScheme,
         override: ?apprt.action.WindowTheme,
     ) Chrome {
+        return initWithDynamic(config, scheme, override, null, null);
+    }
+
+    pub fn initWithDynamic(
+        config: *const configpkg.Config,
+        scheme: apprt.ColorScheme,
+        override: ?apprt.action.WindowTheme,
+        dynamic_bg: ?configpkg.Config.Color,
+        dynamic_fg: ?configpkg.Config.Color,
+    ) Chrome {
         const theme: configpkg.Config.WindowTheme = if (override) |ov| switch (ov) {
             .config => config.@"window-theme",
             .system => .system,
@@ -74,14 +85,17 @@ pub const Chrome = struct {
             .dark => .dark,
         } else config.@"window-theme";
 
+        const bg_base = dynamic_bg orelse config.background;
+        const fg_base = dynamic_fg orelse config.foreground;
+
         return switch (theme) {
-            .auto => .{ .dark = isDark(config.background) },
+            .auto => .{ .dark = isDark(bg_base) },
             .system => .{ .dark = scheme == .dark },
             .light => .{ .dark = false },
             .dark => .{ .dark = true },
             .ghostty => ghostty: {
-                const bg = config.@"window-titlebar-background" orelse config.background;
-                const fg = config.@"window-titlebar-foreground" orelse config.foreground;
+                const bg = config.@"window-titlebar-background" orelse bg_base;
+                const fg = config.@"window-titlebar-foreground" orelse fg_base;
                 break :ghostty .{
                     .dark = isDark(bg),
                     .caption = colorRef(bg),
@@ -186,9 +200,57 @@ fn destroyTab(self: *Window, tab: Tab) void {
     const alloc = self.app.core_app.alloc;
     var tree = tab.tree;
     if (tab.title_override) |v| alloc.free(v);
-    var it = tree.iterator();
-    while (it.next()) |entry| entry.view.destroy();
     tree.deinit();
+}
+
+pub fn restoreFromUndo(app: *App, cw: *UndoHistory.CloseWindowOp) !*Window {
+    const alloc = app.core_app.alloc;
+    const prev = app.activeWindow();
+    const self = try createHost(app);
+    const hwnd = self.hwnd.?;
+    errdefer _ = c.DestroyWindow(hwnd);
+
+    self.decorations_override = cw.decorations_override;
+    self.opaque_override = cw.opaque_override;
+    if (!self.decorationsEnabled()) self.applyDecorations();
+
+    try self.tabs.ensureUnusedCapacity(alloc, cw.tabs.len);
+    self.title_override = cw.title_override;
+    cw.title_override = null;
+    for (cw.tabs) |*saved| {
+        var it = saved.tree.iterator();
+        while (it.next()) |node| node.view.attachToWindow(self);
+        self.tabs.appendAssumeCapacity(.{
+            .tree = saved.tree,
+            .focused = saved.focused,
+            .title_override = saved.title_override,
+        });
+        saved.tree = .empty;
+        saved.title_override = null;
+    }
+
+    if (cw.rect.right > cw.rect.left and cw.rect.bottom > cw.rect.top) {
+        _ = c.SetWindowPos(
+            hwnd,
+            null,
+            cw.rect.left,
+            cw.rect.top,
+            cw.rect.right - cw.rect.left,
+            cw.rect.bottom - cw.rect.top,
+            c.SWP_NOZORDER | c.SWP_NOACTIVATE,
+        );
+    } else {
+        self.place(prev);
+    }
+
+    self.active = @min(cw.active, @max(1, self.tabs.items.len) - 1);
+    self.applyChrome(app.chrome);
+    _ = c.ShowWindow(hwnd, c.SW_SHOWNORMAL);
+    _ = c.UpdateWindow(hwnd);
+    _ = c.SetForegroundWindow(hwnd);
+    self.focusActive();
+    self.refreshTitle();
+    return self;
 }
 
 pub fn requestClose(self: *Window) void {
@@ -250,11 +312,23 @@ fn addTab(
     };
     const prev = self.activeSurface();
     const surface = try Surface.create(self, self.contentRect(count + 1), context, parent);
-    errdefer surface.destroy();
+    defer surface.unref();
     const tree = try SplitView.Tree.init(alloc, surface);
     self.tabs.insertAssumeCapacity(index, .{ .tree = tree, .focused = surface });
     self.activate(index, prev);
     return surface;
+}
+
+pub fn activateTab(self: *Window, index: usize, prev: ?*Surface) void {
+    self.activate(index, prev);
+}
+
+pub fn relayout(self: *Window) void {
+    self.layout();
+    self.focusActive();
+    self.updateDwmColors(self.app.chrome);
+    self.tab_bar.invalidate();
+    self.refreshTitle();
 }
 
 fn activate(self: *Window, index: usize, prev: ?*Surface) void {
@@ -264,6 +338,7 @@ fn activate(self: *Window, index: usize, prev: ?*Surface) void {
     self.active = index;
     self.layout();
     if (focus) self.focusActive();
+    self.updateDwmColors(self.app.chrome);
     self.tab_bar.invalidate();
     self.refreshTitle();
 }
@@ -450,23 +525,17 @@ fn presentActive(self: *Window, timeout_ms: u32) void {
 }
 
 pub fn transferTab(self: *Window, index: usize, target: *Window, at: usize) bool {
-    const target_hwnd = target.hwnd orelse return false;
+    if (target.hwnd == null) return false;
     if (index >= self.tabs.items.len) return false;
     target.tabs.ensureUnusedCapacity(self.app.core_app.alloc, 1) catch return false;
     self.cancelDrag();
     target.cancelDrag();
     const tab = self.tabs.orderedRemove(index);
 
-    const dpi = c.GetDpiForWindow(target_hwnd);
-    const scale = @as(f32, @floatFromInt(dpi)) / 96.0;
     var tree = tab.tree;
     var it = tree.iterator();
     while (it.next()) |entry| {
-        const surface = entry.view;
-        surface.window = target;
-        if (surface.hwnd) |h| _ = c.SetParent(h, target_hwnd);
-        if (surface.content_scale.x != scale) surface.dpiChanged(dpi);
-        surface.refresh();
+        entry.view.attachToWindow(target);
     }
     const prev = target.activeSurface();
     const pos = @min(at, target.tabs.items.len);
@@ -507,6 +576,11 @@ pub fn surfaceTitleChanged(self: *Window, surface: *Surface) void {
     if (self.activeSurface() == surface) self.refreshTitle();
 }
 
+pub fn surfaceColorChanged(self: *Window, surface: *Surface) void {
+    self.tab_bar.invalidate();
+    if (self.activeSurface() == surface) self.updateDwmColors(self.app.chrome);
+}
+
 pub fn surfaceFocused(self: *Window, surface: *Surface) void {
     const index = self.tabIndex(surface) orelse return;
     const tab = &self.tabs.items[index];
@@ -518,7 +592,10 @@ pub fn surfaceFocused(self: *Window, surface: *Surface) void {
         entry.view.overlay.setUnfocusedSplit(index == self.active and split and entry.view != surface);
     }
     self.tab_bar.invalidate();
-    if (index == self.active) self.refreshTitle();
+    if (index == self.active) {
+        self.updateDwmColors(self.app.chrome);
+        self.refreshTitle();
+    }
 }
 
 fn tabNeedsConfirm(self: *Window, index: usize) bool {
@@ -557,36 +634,105 @@ pub fn closeTabs(self: *Window, surface: *Surface, mode: apprt.action.CloseTabMo
     }
     if (targets.items.len == 0) return;
     if (confirm and !dialogs.confirmClose(self.hwnd, .tab)) return;
+    const was_active = self.activeSurface();
+    const focus = self.shouldFocus(was_active);
+    var saved_list: std.ArrayList(UndoHistory.SavedTab) = .empty;
+    defer saved_list.deinit(alloc);
+
     for (targets.items) |s| {
-        if (self.tabIndex(s)) |i| self.removeTab(i);
+        const i = self.tabIndex(s) orelse continue;
+        if (self.tabs.items.len <= 1) {
+            self.removeTab(i);
+            break;
+        }
+        const orig_idx = i + saved_list.items.len;
+        const tab = self.tabs.orderedRemove(i);
+        if (i < self.active) {
+            self.active -= 1;
+        } else if (i == self.active) {
+            self.active = @min(i, self.tabs.items.len - 1);
+        }
+        if (!self.is_quick_terminal and self.app.undo_history.enabled(self.app)) {
+            saved_list.append(alloc, .{
+                .tree = tab.tree,
+                .focused = tab.focused,
+                .title_override = tab.title_override,
+                .index = orig_idx,
+            }) catch self.destroyTab(tab);
+        } else {
+            self.destroyTab(tab);
+        }
+    }
+    if (saved_list.items.len > 0) {
+        if (saved_list.toOwnedSlice(alloc)) |slice| {
+            if (!self.app.undo_history.recordCloseTabs(self, slice, was_active)) {
+                for (slice) |*st| st.deinit(alloc);
+                alloc.free(slice);
+            }
+        } else |_| {
+            for (saved_list.items) |*st| st.deinit(alloc);
+        }
+    }
+    if (self.hwnd != null and self.tabs.items.len > 0) {
+        self.activate(@min(self.active, self.tabs.items.len - 1), null);
+        if (focus) self.focusActive();
+        self.layout();
+        self.tab_bar.invalidate();
+        self.refreshTitle();
     }
 }
 
 fn removeTab(self: *Window, index: usize) void {
     self.cancelDrag();
-    const tab = self.tabs.orderedRemove(index);
-    const remaining = self.tabs.items.len;
-    if (remaining == 0) {
-        self.active = 0;
-        self.split_view.clear();
-        self.destroyTab(tab);
+    if (self.tabs.items.len == 1) {
+        if (!self.is_quick_terminal and self.app.canUndoCloseWindow()) {
+            self.app.undo_history.recordCloseWindow(self);
+        }
+        if (self.tabs.pop()) |tab| {
+            self.active = 0;
+            self.split_view.clear();
+            self.destroyTab(tab);
+        }
         if (self.hwnd) |hwnd| _ = c.DestroyWindow(hwnd);
         return;
     }
+
+    const was_active = self.activeSurface();
+    const tab = self.tabs.orderedRemove(index);
+    const remaining = self.tabs.items.len;
 
     if (index < self.active) {
         self.active -= 1;
     } else if (index == self.active) {
         self.activate(@min(index, remaining - 1), tab.focused);
     }
-    self.destroyTab(tab);
+
+    var recorded = false;
+    if (!self.is_quick_terminal and self.app.undo_history.enabled(self.app)) {
+        const alloc = self.app.core_app.alloc;
+        if (alloc.alloc(UndoHistory.SavedTab, 1)) |slice| {
+            slice[0] = .{
+                .tree = tab.tree,
+                .focused = tab.focused,
+                .title_override = tab.title_override,
+                .index = index,
+            };
+            if (self.app.undo_history.recordCloseTabs(self, slice, was_active)) {
+                recorded = true;
+            } else {
+                alloc.free(slice);
+            }
+        } else |_| {}
+    }
+    if (!recorded) self.destroyTab(tab);
+
     self.layout();
     self.tab_bar.invalidate();
     self.refreshTitle();
 }
 
 pub fn closeSurface(self: *Window, surface: *Surface) void {
-    const index = self.tabIndex(surface) orelse return surface.destroy();
+    const index = self.tabIndex(surface) orelse return;
     const tab = &self.tabs.items[index];
     if (!tab.tree.isSplit()) return self.removeTab(index);
 
@@ -603,16 +749,18 @@ pub fn closeSurface(self: *Window, surface: *Surface) void {
         return;
     };
     const focus = index == self.active and self.shouldFocus(surface);
+    if (!self.is_quick_terminal) {
+        self.app.undo_history.recordCloseSplit(self.app, &tab.tree, surface, next);
+    }
     self.replaceTree(tab, tree);
     tab.focused = next;
     self.layout();
     if (focus) self.focusActive();
-    surface.destroy();
     self.tab_bar.invalidate();
     self.refreshTitle();
 }
 
-fn replaceTree(self: *Window, tab: *Tab, tree: SplitView.Tree) void {
+pub fn replaceTree(self: *Window, tab: *Tab, tree: SplitView.Tree) void {
     self.cancelDrag();
     tab.tree.deinit();
     tab.tree = tree;
@@ -659,7 +807,7 @@ pub fn newSplit(self: *Window, surface: *Surface, direction: apprt.action.SplitD
     const focus = index == self.active and self.shouldFocus(surface);
 
     const new = try Surface.create(self, rect, .split, surface.core());
-    errdefer new.destroy();
+    defer new.unref();
     var single = try SplitView.Tree.init(alloc, new);
     defer single.deinit();
 
@@ -799,14 +947,31 @@ fn refreshTitle(self: *Window) void {
     _ = c.SetWindowTextW(hwnd, wide);
 }
 
-pub fn applyChrome(self: *Window, chrome: Chrome) void {
+fn effectiveChrome(self: *const Window, base: Chrome) Chrome {
+    const s = self.activeSurface() orelse return base;
+    if (s.dynamic_bg == null and s.dynamic_fg == null) return base;
+    return Chrome.initWithDynamic(
+        &self.app.config,
+        self.app.color_scheme,
+        self.app.window_theme_override,
+        s.dynamic_bg,
+        s.dynamic_fg,
+    );
+}
+
+fn updateDwmColors(self: *Window, base: Chrome) void {
     const hwnd = self.hwnd orelse return;
-    const dark: c.BOOL = if (chrome.dark) .TRUE else .FALSE;
+    const eff = self.effectiveChrome(base);
+    const dark: c.BOOL = if (eff.dark) .TRUE else .FALSE;
     _ = c.DwmSetWindowAttribute(hwnd, c.DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, @sizeOf(c.BOOL));
-    const caption = chrome.caption orelse c.DWMWA_COLOR_DEFAULT;
+    const caption = eff.caption orelse c.DWMWA_COLOR_DEFAULT;
     _ = c.DwmSetWindowAttribute(hwnd, c.DWMWA_CAPTION_COLOR, &caption, @sizeOf(c.COLORREF));
-    const text = chrome.text orelse c.DWMWA_COLOR_DEFAULT;
+    const text = eff.text orelse c.DWMWA_COLOR_DEFAULT;
     _ = c.DwmSetWindowAttribute(hwnd, c.DWMWA_TEXT_COLOR, &text, @sizeOf(c.COLORREF));
+}
+
+pub fn applyChrome(self: *Window, chrome: Chrome) void {
+    self.updateDwmColors(chrome);
     self.applyBackdrop();
     self.updateBellBorder();
     self.layout();
@@ -1307,7 +1472,7 @@ fn setTabVisible(self: *Window, visible: bool) void {
     }
 }
 
-fn cancelDrag(self: *Window) void {
+pub fn cancelDrag(self: *Window) void {
     if (self.drag == null) return;
     self.drag = null;
     if (self.hwnd) |hwnd| {
@@ -1366,6 +1531,9 @@ fn handleClose(self: *Window) void {
         if (!self.tabNeedsConfirm(i)) continue;
         if (!dialogs.confirmClose(self.hwnd, .window)) return;
         break;
+    }
+    if (!self.is_quick_terminal and self.app.canUndoCloseWindow()) {
+        self.app.undo_history.recordCloseWindow(self);
     }
     if (self.hwnd) |hwnd| _ = c.DestroyWindow(hwnd);
 }

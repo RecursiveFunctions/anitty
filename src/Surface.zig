@@ -263,6 +263,10 @@ const Mouse = struct {
     /// only process link hover events when the mouse actually moves cells.
     link_point: ?terminal.point.Coordinate = null,
 
+    /// The viewport cell where a double-click selection started, cleared
+    /// once the cursor drags to a different cell or outside the viewport.
+    double_click_point: ?terminal.point.Coordinate = null,
+
     /// Return the left-click pin only if it still belongs to the active screen.
     fn activeLeftClickPin(self: *const Mouse, screens: *const terminal.ScreenSet) ?*terminal.Pin {
         return self.selection_gesture.validatedLeftClickPin(screens);
@@ -4074,6 +4078,7 @@ pub fn mouseButtonCallback(
             // is disabled in the middle of press (before release) we don't
             // suddenly start selecting text.
             self.mouse.selection_gesture.reset(self.renderer_state.terminal);
+            self.mouse.double_click_point = null;
 
             const pos = try self.rt_surface.getCursorPos();
 
@@ -4097,86 +4102,9 @@ pub fn mouseButtonCallback(
 
     // For left button clicks we always record some information for
     // selection/highlighting purposes.
-    if (button == .left and action == .press) click: {
-        self.renderer_state.mutex.lockUncancelable(global.io());
-        defer self.renderer_state.mutex.unlock(global.io());
-        const t: *terminal.Terminal = self.renderer_state.terminal;
-        const screen: *terminal.Screen = self.renderer_state.terminal.screens.active;
-
+    if (button == .left and action == .press) {
         const pos = try self.rt_surface.getCursorPos();
-        const pin = pin: {
-            const pt_viewport = self.posToViewport(pos.x, pos.y);
-            const pin = screen.pages.pin(.{
-                .viewport = .{
-                    .x = pt_viewport.x,
-                    .y = pt_viewport.y,
-                },
-            }) orelse {
-                // Weird... our viewport x/y that we just converted isn't
-                // found in our pages. This is probably a bug but we don't
-                // want to crash in releases because its harmless. So, we
-                // only assert in debug mode.
-                if (comptime std.debug.runtime_safety) unreachable;
-                break :click;
-            };
-
-            break :pin pin;
-        };
-
-        var press_selection = try self.mouse.selection_gesture.press(t, .{
-            .time = std.Io.Timestamp.now(global.io(), .awake),
-            .pin = pin,
-            .xpos = pos.x,
-            .ypos = pos.y,
-            .max_distance = @floatFromInt(self.size.cell.width),
-            .repeat_interval = self.config.mouse_interval,
-            .word_boundary_codepoints = self.config.selection_word_chars,
-            .behaviors = &.{
-                .cell,
-                .word,
-                if (mods.ctrlOrSuper()) .output else .line,
-            },
-        });
-
-        // The gesture owns the standard single/double/triple-click selection
-        // behavior. Surface keeps terminal-surface-specific overrides here.
-        switch (self.mouse.selection_gesture.left_click_count) {
-            1 => {},
-
-            // Double click on a URL selects the entire URL instead of the
-            // standard word selection returned by the gesture.
-            2 => {
-                // Try link detection without requiring modifier keys.
-                if (self.linkAtPin(
-                    pin,
-                    null,
-                )) |result_| {
-                    if (result_) |result| {
-                        press_selection = result.selection;
-                    }
-                } else |_| {
-                    // Ignore any errors, likely regex errors.
-                }
-            },
-
-            3 => {},
-
-            // We should be bounded by 1 to 3
-            else => unreachable,
-        }
-
-        // Use `setSelection` (not `setSelectionAndCopy`) here to avoid
-        // touching the selection clipboard: for left mouse clicks we only
-        // copy on release.
-        if (press_selection) |selection| {
-            try self.setSelection(selection);
-            try self.queueRender();
-        } else if (self.mouse.selection_gesture.left_click_count == 1 and
-            self.io.terminal.screens.active.selection != null)
-        {
-            try self.setSelection(null);
-            try self.queueRender();
-        }
+        try self.mouseSelectionPress(pos, mods);
     }
 
     // Middle-click action, either ignore, or paste from clipboard or paste from the selection clipboard if supported.
@@ -4296,6 +4224,92 @@ pub fn mouseButtonCallback(
     }
 
     return false;
+}
+
+fn mouseSelectionPress(
+    self: *Surface,
+    pos: apprt.CursorPos,
+    mods: input.Mods,
+) !void {
+    self.renderer_state.mutex.lockUncancelable(global.io());
+    defer self.renderer_state.mutex.unlock(global.io());
+    const t: *terminal.Terminal = self.renderer_state.terminal;
+    const screen: *terminal.Screen = self.renderer_state.terminal.screens.active;
+
+    const pt_viewport = self.posToViewport(pos.x, pos.y);
+    const pin = screen.pages.pin(.{
+        .viewport = .{
+            .x = pt_viewport.x,
+            .y = pt_viewport.y,
+        },
+    }) orelse {
+        // Weird... our viewport x/y that we just converted isn't
+        // found in our pages. This is probably a bug but we don't
+        // want to crash in releases because its harmless. So, we
+        // only assert in debug mode.
+        if (comptime std.debug.runtime_safety) unreachable;
+        self.mouse.double_click_point = null;
+        return;
+    };
+
+    var press_selection = try self.mouse.selection_gesture.press(t, .{
+        .time = std.Io.Timestamp.now(global.io(), .awake),
+        .pin = pin,
+        .xpos = pos.x,
+        .ypos = pos.y,
+        .max_distance = @floatFromInt(self.size.cell.width),
+        .repeat_interval = self.config.mouse_interval,
+        .word_boundary_codepoints = self.config.selection_word_chars,
+        .behaviors = &.{
+            .cell,
+            .word,
+            if (mods.ctrlOrSuper()) .output else .line,
+        },
+    });
+    self.mouse.double_click_point = if (self.mouse.selection_gesture.left_click_count == 2)
+        pt_viewport
+    else
+        null;
+
+    // The gesture owns the standard single/double/triple-click selection
+    // behavior. Surface keeps terminal-surface-specific overrides here.
+    switch (self.mouse.selection_gesture.left_click_count) {
+        1 => {},
+
+        // Double click on a URL selects the entire URL instead of the
+        // standard word selection returned by the gesture.
+        2 => {
+            // Try link detection without requiring modifier keys.
+            if (self.linkAtPin(
+                pin,
+                null,
+            )) |result_| {
+                if (result_) |result| {
+                    press_selection = result.selection;
+                }
+            } else |_| {
+                // Ignore any errors, likely regex errors.
+            }
+        },
+
+        3 => {},
+
+        // We should be bounded by 1 to 3
+        else => unreachable,
+    }
+
+    // Use `setSelection` (not `setSelectionAndCopy`) here to avoid
+    // touching the selection clipboard: for left mouse clicks we only
+    // copy on release.
+    if (press_selection) |selection| {
+        try self.setSelection(selection);
+        try self.queueRender();
+    } else if (self.mouse.selection_gesture.left_click_count == 1 and
+        self.io.terminal.screens.active.selection != null)
+    {
+        try self.setSelection(null);
+        try self.queueRender();
+    }
 }
 
 /// Requires the renderer state mutex is held.
@@ -4677,6 +4691,8 @@ pub fn mousePressureCallback(
             .{ .word_boundary_codepoints = self.config.selection_word_chars },
         );
 
+        self.mouse.double_click_point = null;
+
         // Deep press consumes the active drag gesture, so stop any pending
         // selection autoscroll timer that may have been started by the drag.
         if (self.selection_scroll_active) {
@@ -4845,6 +4861,17 @@ pub fn cursorPosCallback(
         // selection.
         const t: *terminal.Terminal = self.renderer_state.terminal;
         if (self.mouse.activeLeftClickPin(&t.screens) == null) break :select;
+
+        if (self.mouse.double_click_point) |point| {
+            if (!point.eql(pos_vp) or pos.x < 0 or pos.y < 0 or
+                pos.x >= @as(f64, @floatFromInt(self.size.screen.width)) or
+                pos.y >= @as(f64, @floatFromInt(self.size.screen.height)))
+            {
+                self.mouse.double_click_point = null;
+            }
+        }
+        if (self.mouse.selection_gesture.left_click_count == 2 and
+            self.mouse.double_click_point != null) break :select;
 
         // All roads lead to requiring a re-render at this point.
         try self.queueRender();

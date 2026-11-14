@@ -128,7 +128,7 @@ ghostty\
 
 ### Phase 1 — Signed Installers & Automatic In-App Updates (Shipped)
 
-- [x] **Authenticode Code-Signing Pipeline (`dist/windows/sign-file.ps1`):** Automated signing of `ghostty.exe` and `Ghostty-Windows-Setup-x64.exe` in `.github/workflows/release-windows.yml` supporting both **Azure Trusted Signing OIDC** (`Azure.CodeSigning.Dlib`) and **PFX certificates** (`WINDOWS_PFX_BASE64`), with graceful fallback for fork/community builds.
+- [x] **Authenticode Code-Signing Pipeline (`dist/windows/sign-file.ps1`):** Automated signing of `ghostty.exe` and `Ghostty-Windows-Setup-x64.exe` in `.github/workflows/release-windows.yml` via **SignPath.io / SignPath Foundation**, **Azure Trusted Signing OIDC** (`Azure.CodeSigning.Dlib`), or **PFX certificates** (`WINDOWS_PFX_BASE64`), with graceful fallback for community forks.
 - [x] **Automatic In-App Updates (`check_for_updates`):** Background `WinHTTP` updater (`src/apprt/win32/updater.zig`) that queries GitHub Releases, downloads `SHA256SUMS.txt` and the matching release asset (`Ghostty-Windows-Setup-x64.exe` or `Ghostty-Windows-x64.zip`), verifies the SHA-256 digest using `std.crypto.hash.sha2.Sha256`, and upgrades + restarts Ghostty in-place.
 
 ### Phase 2 — DirectX / WARP Fallback & WinGet (Next)

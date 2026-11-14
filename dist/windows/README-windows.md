@@ -15,15 +15,15 @@ In accordance with Ghostty's [`AI_POLICY.md`](../../AI_POLICY.md), this section 
 
 - **Upstream Base:** Built on [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) by Mitchell Hashimoto and contributors.
 - **Win32 Runtime Foundation:** Initial Win32 runtime (`src/apprt/win32/`), WGL OpenGL provider (`src/renderer/opengl/wgl.zig`), and Windows packaging scripts were derived from [`phalladar/ghostty-windows`](https://github.com/phalladar/ghostty-windows) by Josh Auriemma.
-- **AI Assistance Disclosure:** The Zig 0.17 / Ghostty 1.4.1-dev rebase and port, automated CI release pipeline, and Win32 feature parity implementation (search overlay, command palette, tab overview, quick terminal, global hotkeys, DWM backdrop/transparency, dynamic OSC 10/11 chrome colors, live-session `undo`/`redo`, `check_for_updates`, `ghostty +ssh` remote terminfo auto-install, WinRT toast notifications, Windows `.mo` localization, unfocused split dimming, `bell-features = border`, and Dear ImGui terminal inspector) were developed with AI assistance using **Kilo Code**, with human review, build verification, and runtime testing.
+- **AI Assistance Disclosure:** The Zig 0.17 / Ghostty 1.4.1-dev rebase and port, automated CI release pipeline, and Win32 feature parity implementation (search overlay, command palette, tab overview, quick terminal, global hotkeys, DWM backdrop/transparency, dynamic OSC 10/11 chrome colors, live-session `undo`/`redo`, session save/restore, `check_for_updates`, `ghostty +ssh` remote terminfo auto-install, WinRT toast notifications, Taskbar Jump Lists, OLE drag-and-drop, `CF_HTML` rich clipboard, Media Foundation bell audio, DirectWrite font fallback, D3D11/WARP fallback presenter, Windows `.mo` localization, unfocused split dimming, `bell-features = border`, and Dear ImGui terminal inspector) were developed with AI assistance using **Kilo Code**, with human review, build verification, and runtime testing.
 
 ## Requirements
 
-- Windows 11 (x86_64). Windows 10 is not tested.
-- A GPU and driver that provide **OpenGL 4.3**. Any current NVIDIA, AMD or
-  Intel driver does. Virtual machines without GPU acceleration and remote
-  sessions that fall back to the Microsoft Basic Render Driver do not; see
-  [Known issues](#known-issues).
+- Windows 11 (x86_64). Windows 10 (1809+) is supported via the bundled ConPTY runtime.
+- A GPU and driver that provide **OpenGL 4.3** (any current NVIDIA, AMD, or
+  Intel driver), or DirectX 11 + Microsoft WARP software fallback
+  (`GHOSTTY_WIN32_PRESENTER=d3d11|warp`) for virtual machines and Remote
+  Desktop sessions.
 
 ## Portable zip
 
@@ -235,9 +235,11 @@ the same build, so keep it if you build Ghostty yourself.
 
 Platform limitations:
 
-- **Remote desktop and virtual machines.** Without a GPU that provides
-  OpenGL 4.3 (RDP sessions using the Microsoft Basic Render Driver, VMs
-  without GPU acceleration) the renderer cannot start.
+- **Remote desktop and virtual machines.** When running in an environment
+  without hardware OpenGL 4.3 (RDP sessions using the Microsoft Basic Render
+  Driver or GPU-less VMs), Ghostty activates its DirectX 11 / Microsoft WARP
+  presenter (`src/renderer/opengl/d3d11_presenter.zig`, configurable via
+  `GHOSTTY_WIN32_PRESENTER=d3d11|warp`).
 - **OSC 52 clipboard read** does not work: ConPTY does not forward the
   query to the terminal. OSC 52 clipboard writes work.
 - **`copy-on-select = primary`** copies selections to the internal Win32

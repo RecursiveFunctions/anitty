@@ -651,9 +651,12 @@ test "getIndex: face that fails to load is treated as no font" {
         .fontconfig_freetype => 0x1F17C,
         .freetype_windows => font_cp: {
             // Remove the primary face so fallback is consulted for 'A'.
-            var list = &grid.resolver.collection.faces.getPtr(.regular).entries;
-            var entry = list.pop().?;
-            entry.deinit(alloc);
+            const list = grid.resolver.collection.faces.getPtr(.regular);
+            var entry_or_alias = list.pop().?;
+            switch (entry_or_alias) {
+                .entry => |*entry| entry.deinit(),
+                .alias => {},
+            }
             break :font_cp 'A';
         },
         else => unreachable,

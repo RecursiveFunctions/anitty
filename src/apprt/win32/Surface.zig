@@ -17,6 +17,7 @@ const ime = @import("ime.zig");
 const SearchOverlay = @import("SearchOverlay.zig");
 const SurfaceOverlay = @import("SurfaceOverlay.zig");
 const InspectorWindow = @import("InspectorWindow.zig");
+const i18n = @import("../../os/main.zig").i18n;
 
 const log = std.log.scoped(.win32);
 
@@ -125,6 +126,8 @@ pub fn create(
     self.core_surface.sizeCallback(self.size) catch |err| {
         log.warn("error in size callback err={}", .{err});
     };
+    const grid = self.core_surface.size.grid();
+    self.overlay.notifyGridResize(grid.columns, grid.rows);
 
     return self;
 }
@@ -445,6 +448,14 @@ fn mouseMove(self: *Surface, wparam: c.WPARAM, lparam: c.LPARAM) void {
     const pos: apprt.CursorPos = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
     if (pos.x == self.cursor_pos.x and pos.y == self.cursor_pos.y) return;
     self.cursor_pos = pos;
+    if (!self.focused and !self.detached and self.app.config.@"focus-follows-mouse") {
+        if (self.window.hwnd) |win_hwnd| {
+            if (c.GetForegroundWindow() == win_hwnd) {
+                self.window.selectSurface(self);
+                if (self.hwnd) |h| _ = c.SetFocus(h);
+            }
+        }
+    }
     if (self.overlay.pill_len > 0) self.overlay.refreshPill();
     if (!self.initialized) return;
     self.core_surface.cursorPosCallback(pos, mouseMods(wparam)) catch |err| {
@@ -468,9 +479,9 @@ fn mouseButton(
     button: input.MouseButton,
     wparam: c.WPARAM,
     lparam: c.LPARAM,
-) void {
-    const hwnd = self.hwnd orelse return;
-    if (state == .press and button == .left) _ = c.SetFocus(hwnd);
+) bool {
+    const hwnd = self.hwnd orelse return false;
+    if (state == .press and (button == .left or button == .right)) _ = c.SetFocus(hwnd);
     self.mouseMove(wparam, lparam);
 
     const bit = @as(u16, 1) << @intCast(@backingInt(button));
@@ -485,9 +496,101 @@ fn mouseButton(
         },
     }
 
-    if (!self.initialized) return;
-    _ = self.core_surface.mouseButtonCallback(state, button, mouseMods(wparam)) catch |err| {
+    if (!self.initialized) return false;
+    return self.core_surface.mouseButtonCallback(state, button, mouseMods(wparam)) catch |err| {
         log.warn("error in mouse button callback err={}", .{err});
+        return false;
+    };
+}
+
+const ContextMenuCmd = enum(c.UINT_PTR) {
+    copy = 1,
+    paste = 2,
+    copy_url = 3,
+    split_right = 4,
+    split_down = 5,
+    toggle_split_zoom = 6,
+    find = 7,
+    clear_screen = 8,
+    reset_terminal = 9,
+    toggle_inspector = 10,
+    command_palette = 11,
+};
+
+fn appendContextMenuItem(
+    alloc: std.mem.Allocator,
+    menu: c.HMENU,
+    enabled: bool,
+    cmd: ContextMenuCmd,
+    label_utf8: [*:0]const u8,
+    fallback: [:0]const u16,
+) void {
+    const flags: c.UINT = if (enabled) c.MF_STRING else c.MF_STRING | c.MF_GRAYED;
+    const wide = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(label_utf8)) catch null;
+    defer if (wide) |w| alloc.free(w);
+    _ = c.AppendMenuW(menu, flags, @backingInt(cmd), if (wide) |w| w.ptr else fallback.ptr);
+}
+
+fn showContextMenu(self: *Surface, hwnd: c.HWND, pt_client: c.POINT) void {
+    if (!self.initialized or self.detached) return;
+    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    const alloc = self.app.core_app.alloc;
+
+    const menu = c.CreatePopupMenu() orelse return;
+    defer _ = c.DestroyMenu(menu);
+
+    const has_sel = self.core_surface.hasSelection();
+    const has_clip = clipboard.hasText();
+    const is_split = if (self.window.tabIndex(self)) |idx|
+        self.window.tabs.items[idx].tree.isSplit()
+    else
+        false;
+
+    appendContextMenuItem(alloc, menu, has_sel, .copy, i18n._("Copy"), L("Copy"));
+    appendContextMenuItem(alloc, menu, has_clip, .paste, i18n._("Paste"), L("Paste"));
+    if (self.hover_url != null) {
+        appendContextMenuItem(alloc, menu, true, .copy_url, i18n._("Copy URL"), L("Copy URL"));
+    }
+    _ = c.AppendMenuW(menu, c.MF_SEPARATOR, 0, null);
+    appendContextMenuItem(alloc, menu, true, .split_right, i18n._("Split Right"), L("Split Right"));
+    appendContextMenuItem(alloc, menu, true, .split_down, i18n._("Split Down"), L("Split Down"));
+    appendContextMenuItem(alloc, menu, is_split, .toggle_split_zoom, i18n._("Toggle Split Zoom"), L("Toggle Split Zoom"));
+    _ = c.AppendMenuW(menu, c.MF_SEPARATOR, 0, null);
+    appendContextMenuItem(alloc, menu, true, .find, i18n._("Find\u{2026}"), L("Find\u{2026}"));
+    appendContextMenuItem(alloc, menu, true, .clear_screen, i18n._("Clear Screen"), L("Clear Screen"));
+    appendContextMenuItem(alloc, menu, true, .reset_terminal, i18n._("Reset Terminal"), L("Reset Terminal"));
+    appendContextMenuItem(alloc, menu, true, .toggle_inspector, i18n._("Toggle Terminal Inspector"), L("Toggle Terminal Inspector"));
+    appendContextMenuItem(alloc, menu, true, .command_palette, i18n._("Command Palette"), L("Command Palette"));
+
+    var screen_pt = pt_client;
+    _ = c.ClientToScreen(hwnd, &screen_pt);
+    const cmd_raw = c.TrackPopupMenuEx(
+        menu,
+        c.TPM_LEFTALIGN | c.TPM_TOPALIGN | c.TPM_RIGHTBUTTON | c.TPM_RETURNCMD,
+        screen_pt.x,
+        screen_pt.y,
+        hwnd,
+        null,
+    );
+    const cmd_id: usize = @intCast(@as(c_int, @bitCast(cmd_raw)));
+    if (cmd_id == 0 or !self.initialized or self.detached) return;
+
+    const cmd = std.enums.fromInt(ContextMenuCmd, cmd_id) orelse return;
+    const action: input.Binding.Action = switch (cmd) {
+        .copy => .{ .copy_to_clipboard = .mixed },
+        .paste => .paste_from_clipboard,
+        .copy_url => .copy_url_to_clipboard,
+        .split_right => .{ .new_split = .right },
+        .split_down => .{ .new_split = .down },
+        .toggle_split_zoom => .toggle_split_zoom,
+        .find => .start_search,
+        .clear_screen => .clear_screen,
+        .reset_terminal => .reset,
+        .toggle_inspector => .{ .inspector = .toggle },
+        .command_palette => .toggle_command_palette,
+    };
+    _ = self.core_surface.performBindingAction(action) catch |err| {
+        log.warn("error performing context menu action err={}", .{err});
     };
 }
 
@@ -857,6 +960,8 @@ pub fn wndProc(
                 self.core_surface.sizeCallback(self.size) catch |err| {
                     log.warn("error in size callback err={}", .{err});
                 };
+                const grid = self.core_surface.size.grid();
+                self.overlay.notifyGridResize(grid.columns, grid.rows);
             }
             return 0;
         },
@@ -916,32 +1021,54 @@ pub fn wndProc(
         },
 
         c.WM_LBUTTONDOWN => {
-            self.mouseButton(.press, .left, wparam, lparam);
+            _ = self.mouseButton(.press, .left, wparam, lparam);
             return 0;
         },
 
         c.WM_LBUTTONUP => {
-            self.mouseButton(.release, .left, wparam, lparam);
+            _ = self.mouseButton(.release, .left, wparam, lparam);
             return 0;
         },
 
         c.WM_RBUTTONDOWN => {
-            self.mouseButton(.press, .right, wparam, lparam);
+            _ = self.mouseButton(.press, .right, wparam, lparam);
             return 0;
         },
 
         c.WM_RBUTTONUP => {
-            self.mouseButton(.release, .right, wparam, lparam);
+            const consumed = self.mouseButton(.release, .right, wparam, lparam);
+            if (!consumed and self.initialized and self.core_surface.config.right_click_action == .@"context-menu") {
+                const x: i16 = @bitCast(c.loword(lparam));
+                const y: i16 = @bitCast(c.hiword(lparam));
+                self.showContextMenu(hwnd, .{ .x = x, .y = y });
+            }
+            return 0;
+        },
+
+        c.WM_CONTEXTMENU => {
+            if (self.initialized and self.core_surface.config.right_click_action == .@"context-menu") {
+                const x: i16 = @bitCast(c.loword(lparam));
+                const y: i16 = @bitCast(c.hiword(lparam));
+                const pt: c.POINT = if (x == -1 and y == -1) .{
+                    .x = @intCast(self.size.width / 2),
+                    .y = @intCast(self.size.height / 2),
+                } else pt: {
+                    var p: c.POINT = .{ .x = x, .y = y };
+                    _ = c.ScreenToClient(hwnd, &p);
+                    break :pt p;
+                };
+                self.showContextMenu(hwnd, pt);
+            }
             return 0;
         },
 
         c.WM_MBUTTONDOWN => {
-            self.mouseButton(.press, .middle, wparam, lparam);
+            _ = self.mouseButton(.press, .middle, wparam, lparam);
             return 0;
         },
 
         c.WM_MBUTTONUP => {
-            self.mouseButton(.release, .middle, wparam, lparam);
+            _ = self.mouseButton(.release, .middle, wparam, lparam);
             return 0;
         },
 
@@ -952,7 +1079,7 @@ pub fn wndProc(
                 else => .unknown,
             };
             const state: input.MouseButtonState = if (msg == c.WM_XBUTTONDOWN) .press else .release;
-            self.mouseButton(state, button, wparam, lparam);
+            _ = self.mouseButton(state, button, wparam, lparam);
             return 1;
         },
 

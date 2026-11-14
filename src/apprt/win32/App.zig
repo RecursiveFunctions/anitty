@@ -19,6 +19,7 @@ const InspectorWindow = @import("InspectorWindow.zig");
 const UndoHistory = @import("UndoHistory.zig");
 const updater = @import("updater.zig");
 const hotkeyspkg = @import("hotkeys.zig");
+const jumplist = @import("jumplist.zig");
 const taskbarpkg = @import("taskbar.zig");
 const dialogs = @import("dialogs.zig");
 const ipcpkg = @import("ipc.zig");
@@ -40,6 +41,7 @@ const WM_GHOSTTY_CONFIG_ERRORS = c.WM_APP + 3;
 const WM_GHOSTTY_CONFIRM_QUIT = c.WM_APP + 4;
 const WM_GHOSTTY_CLOSE_ALL = c.WM_APP + 5;
 const WM_GHOSTTY_OPEN_URL = c.WM_APP + 8;
+const WM_GHOSTTY_SYNC_JUMPLIST = c.WM_APP + 9;
 const quit_timer_id: c.UINT_PTR = 1;
 
 const OpenUrlRequest = struct {
@@ -145,6 +147,7 @@ pub fn init(
     self.hotkeys.sync(self);
 
     _ = try Window.create(self, null);
+    self.postToSelf(WM_GHOSTTY_SYNC_JUMPLIST);
     if (!self.config._diagnostics.empty()) self.postToSelf(WM_GHOSTTY_CONFIG_ERRORS);
 }
 
@@ -237,6 +240,15 @@ fn registerClasses(instance: ?c.HINSTANCE) !void {
     if (c.RegisterClassExW(&dim_wc) == 0) return error.RegisterClassFailed;
     errdefer _ = c.UnregisterClassW(SurfaceOverlay.dim_class_name, instance);
 
+    const resize_wc: c.WNDCLASSEXW = .{
+        .lpfnWndProc = SurfaceOverlay.resizeWndProc,
+        .hInstance = instance,
+        .hCursor = cursor,
+        .lpszClassName = SurfaceOverlay.resize_class_name,
+    };
+    if (c.RegisterClassExW(&resize_wc) == 0) return error.RegisterClassFailed;
+    errdefer _ = c.UnregisterClassW(SurfaceOverlay.resize_class_name, instance);
+
     const cp_wc: c.WNDCLASSEXW = .{
         .lpfnWndProc = CommandPalette.wndProc,
         .hInstance = instance,
@@ -271,6 +283,7 @@ fn unregisterClasses(instance: ?c.HINSTANCE) void {
     _ = c.UnregisterClassW(InspectorWindow.class_name, instance);
     _ = c.UnregisterClassW(TabOverview.class_name, instance);
     _ = c.UnregisterClassW(CommandPalette.class_name, instance);
+    _ = c.UnregisterClassW(SurfaceOverlay.resize_class_name, instance);
     _ = c.UnregisterClassW(SurfaceOverlay.dim_class_name, instance);
     _ = c.UnregisterClassW(SurfaceOverlay.scrollbar_class_name, instance);
     _ = c.UnregisterClassW(SurfaceOverlay.pill_class_name, instance);
@@ -369,6 +382,10 @@ fn messageWndProc(
         },
         WM_GHOSTTY_CLOSE_ALL => {
             if (self.confirmTerminate(L("Close All Windows?"))) self.destroyAllWindows();
+            return 0;
+        },
+        WM_GHOSTTY_SYNC_JUMPLIST => {
+            jumplist.sync(self);
             return 0;
         },
         WM_GHOSTTY_OPEN_URL => {

@@ -31,6 +31,7 @@ const MenuCmd = enum(c.UINT_PTR) {
 
 hwnd: ?c.HWND = null,
 edit_hwnd: ?c.HWND = null,
+tooltip_hwnd: ?c.HWND = null,
 orig_edit_proc: ?c.WNDPROC = null,
 edit_brush: ?c.HBRUSH = null,
 renaming_surface: ?*Surface = null,
@@ -151,6 +152,32 @@ pub fn create(self: *TabBar, parent: c.HWND, instance: ?c.HINSTANCE) !void {
     _ = c.SetWindowLongPtrW(edit, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
     const prev_proc = c.SetWindowLongPtrW(edit, c.GWLP_WNDPROC, @bitCast(@intFromPtr(&editSubclassProc)));
     self.orig_edit_proc = @ptrFromInt(@as(usize, @bitCast(prev_proc)));
+
+    if (c.CreateWindowExW(
+        c.WS_EX_TOPMOST,
+        L("tooltips_class32"),
+        null,
+        c.WS_POPUP | c.TTS_NOPREFIX | c.TTS_ALWAYSTIP,
+        c.CW_USEDEFAULT,
+        c.CW_USEDEFAULT,
+        c.CW_USEDEFAULT,
+        c.CW_USEDEFAULT,
+        hwnd,
+        null,
+        instance,
+        null,
+    )) |tip| {
+        self.tooltip_hwnd = tip;
+        _ = c.SetWindowPos(tip, c.HWND_TOPMOST, 0, 0, 0, 0, c.SWP_NOMOVE | c.SWP_NOSIZE | c.SWP_NOACTIVATE);
+        var ti: c.TTTOOLINFOW = .{
+            .uFlags = c.TTF_IDISHWND | c.TTF_SUBCLASS,
+            .hwnd = hwnd,
+            .uId = @intFromPtr(hwnd),
+            .lpszText = L(""),
+        };
+        _ = c.SendMessageW(tip, c.TTM_ADDTOOLW, 0, @bitCast(@intFromPtr(&ti)));
+        _ = c.SendMessageW(tip, c.TTM_SETMAXTIPWIDTH, 0, 480);
+    }
 
     self.updateFont();
 }
@@ -408,7 +435,56 @@ fn cross(hdc: c.HDC, r: c.RECT, color: c.COLORREF, size: i32, plus: bool) void {
 fn setHover(self: *TabBar, hit: ?Hit) void {
     if (hitEql(self.hover, hit)) return;
     self.hover = hit;
+    self.updateTooltip(hit);
     self.invalidate();
+}
+
+fn updateTooltip(self: *TabBar, hit: ?Hit) void {
+    const tip = self.tooltip_hwnd orelse return;
+    const hwnd = self.hwnd orelse return;
+    const win = self.window();
+    const alloc = win.app.core_app.alloc;
+
+    var ti: c.TTTOOLINFOW = .{
+        .uFlags = c.TTF_IDISHWND | c.TTF_SUBCLASS,
+        .hwnd = hwnd,
+        .uId = @intFromPtr(hwnd),
+        .lpszText = L(""),
+    };
+
+    const idx: usize = if (hit) |h| switch (h) {
+        .tab, .close => |i| i,
+        .new => {
+            ti.lpszText = L("New Tab");
+            _ = c.SendMessageW(tip, c.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
+            return;
+        },
+    } else {
+        _ = c.SendMessageW(tip, c.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
+        return;
+    };
+
+    if (idx >= win.tabs.items.len) {
+        _ = c.SendMessageW(tip, c.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
+        return;
+    }
+
+    const title = win.tabTitle(idx);
+    const pwd = win.tabs.items[idx].focused.getPwd();
+    const combined = if (pwd) |p| (if (p.len > 0 and !std.mem.eql(u8, p, title))
+        std.fmt.allocPrint(alloc, "{s}\r\n{s}", .{ title, p }) catch null
+    else
+        null) else null;
+    defer if (combined) |s| alloc.free(s);
+
+    const text = combined orelse title;
+    const wide = std.unicode.utf8ToUtf16LeAllocZ(alloc, text) catch {
+        _ = c.SendMessageW(tip, c.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
+        return;
+    };
+    defer alloc.free(wide);
+    ti.lpszText = wide.ptr;
+    _ = c.SendMessageW(tip, c.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
 }
 
 fn hitAt(self: *TabBar, lparam: c.LPARAM) ?Hit {
@@ -1029,15 +1105,41 @@ pub fn wndProc(
             return 0;
         },
 
+        c.WM_MOUSEWHEEL => {
+            self.endDrag(false);
+            self.cancelRename(false);
+            const delta: i16 = @bitCast(c.hiword(@bitCast(wparam)));
+            if (delta > 0) {
+                _ = self.window().gotoTab(.previous);
+            } else if (delta < 0) {
+                _ = self.window().gotoTab(.next);
+            }
+            return 0;
+        },
+
+        c.WM_MOUSEHWHEEL => {
+            self.endDrag(false);
+            self.cancelRename(false);
+            const delta: i16 = @bitCast(c.hiword(@bitCast(wparam)));
+            if (delta < 0) {
+                _ = self.window().gotoTab(.previous);
+            } else if (delta > 0) {
+                _ = self.window().gotoTab(.next);
+            }
+            return 0;
+        },
+
         c.WM_NCDESTROY => {
             self.drag = null;
             self.drop_hint = null;
             self.renaming_surface = null;
             _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, 0);
+            if (self.tooltip_hwnd) |tip| _ = c.DestroyWindow(tip);
             if (self.font) |f| _ = c.DeleteObject(f);
             if (self.edit_brush) |b| _ = c.DeleteObject(b);
             self.font = null;
             self.edit_brush = null;
+            self.tooltip_hwnd = null;
             self.edit_hwnd = null;
             self.hwnd = null;
             return 0;

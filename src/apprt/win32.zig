@@ -8,6 +8,7 @@ pub const c = @import("win32/c.zig");
 pub const clipboard = @import("win32/clipboard.zig");
 pub const ime = @import("win32/ime.zig");
 pub const ipc = @import("win32/ipc.zig");
+pub const jumplist = @import("win32/jumplist.zig");
 pub const key = @import("win32/key.zig");
 pub const hotkeys = @import("win32/hotkeys.zig");
 pub const SearchOverlay = @import("win32/SearchOverlay.zig");

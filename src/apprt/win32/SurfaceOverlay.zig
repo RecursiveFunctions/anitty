@@ -3,6 +3,7 @@ const SurfaceOverlay = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const apprt = @import("../../apprt.zig");
+const configpkg = @import("../../config.zig");
 const input = @import("../../input.zig");
 const renderer = @import("../../renderer.zig");
 const terminal = @import("../../terminal/main.zig");
@@ -20,21 +21,26 @@ pub const banner_class_name = L("GhosttyChildBanner");
 pub const pill_class_name = L("GhosttyStatusPill");
 pub const scrollbar_class_name = L("GhosttyScrollbar");
 pub const dim_class_name = L("GhosttySplitDim");
+pub const resize_class_name = L("GhosttyResizeOverlay");
 
 const banner_height = 34;
 const banner_btn_w = 64;
 const banner_btn_h = 22;
 const pill_height = 24;
 const pill_margin = 8;
+const resize_height = 28;
+const resize_margin = 16;
 const scrollbar_width = 8;
 const min_thumb_height = 24;
 const scrollbar_hide_timer_id: c.UINT_PTR = 1;
 const scrollbar_hide_delay_ms: c.UINT = 1500;
+const resize_hide_timer_id: c.UINT_PTR = 2;
 
 banner_hwnd: ?c.HWND = null,
 pill_hwnd: ?c.HWND = null,
 scrollbar_hwnd: ?c.HWND = null,
 dim_hwnd: ?c.HWND = null,
+resize_hwnd: ?c.HWND = null,
 unfocused_split: bool = false,
 font: ?c.HFONT = null,
 
@@ -48,6 +54,12 @@ key_sequence: std.ArrayList([:0]const u8) = .empty,
 key_tables: std.ArrayList([:0]const u8) = .empty,
 pill_text: [512]u8 = undefined,
 pill_len: usize = 0,
+
+resize_text: [32]u8 = undefined,
+resize_len: usize = 0,
+seen_first_resize: bool = false,
+last_cols: usize = 0,
+last_rows: usize = 0,
 
 scrollbar: terminal.Scrollbar = .{ .total = 0, .offset = 0, .len = 0 },
 scrollbar_dragging: bool = false,
@@ -117,6 +129,21 @@ pub fn create(self: *SurfaceOverlay, parent: c.HWND, instance: ?c.HINSTANCE) !vo
     self.dim_hwnd = c.CreateWindowExW(
         c.WS_EX_LAYERED | @as(c.DWORD, @truncate(c.WS_EX_TRANSPARENT)),
         dim_class_name,
+        null,
+        c.WS_CHILD | c.WS_CLIPSIBLINGS,
+        0,
+        0,
+        0,
+        0,
+        parent,
+        null,
+        instance,
+        self,
+    ) orelse return error.CreateWindowFailed;
+
+    self.resize_hwnd = c.CreateWindowExW(
+        @as(c.DWORD, @truncate(c.WS_EX_TRANSPARENT)),
+        resize_class_name,
         null,
         c.WS_CHILD | c.WS_CLIPSIBLINGS,
         0,
@@ -326,8 +353,105 @@ pub fn layout(self: *SurfaceOverlay) void {
         }
     }
     self.layoutPill();
+    self.layoutResize();
     self.layoutScrollbar();
     self.layoutDim();
+}
+
+pub fn notifyGridResize(self: *SurfaceOverlay, cols: usize, rows: usize) void {
+    if (cols == 0 or rows == 0) return;
+    const s = self.surface();
+    const win_visible = if (s.window.hwnd) |wh| c.IsWindowVisible(wh).toBool() else false;
+    if (!win_visible) {
+        self.last_cols = cols;
+        self.last_rows = rows;
+        self.seen_first_resize = true;
+        return;
+    }
+    if (cols == self.last_cols and rows == self.last_rows) return;
+    self.last_cols = cols;
+    self.last_rows = rows;
+
+    switch (s.app.config.@"resize-overlay") {
+        .never => return,
+        .@"after-first" => if (!self.seen_first_resize) {
+            self.seen_first_resize = true;
+            return;
+        },
+        .always => {},
+    }
+    self.seen_first_resize = true;
+
+    const formatted = std.fmt.bufPrint(&self.resize_text, "{d} \u{00D7} {d}", .{ cols, rows }) catch return;
+    self.resize_len = formatted.len;
+
+    const hwnd = self.resize_hwnd orelse return;
+    self.layoutResize();
+    if (!c.IsWindowVisible(hwnd).toBool()) _ = c.ShowWindow(hwnd, c.SW_SHOWNA);
+    _ = c.InvalidateRect(hwnd, null, .FALSE);
+    const duration_ms: c.UINT = @max(1, s.app.config.@"resize-overlay-duration".asMilliseconds());
+    _ = c.SetTimer(hwnd, resize_hide_timer_id, duration_ms, null);
+}
+
+pub fn computeResizeOverlayRect(
+    parent_w: i32,
+    parent_h: i32,
+    top_inset: i32,
+    pill_w: i32,
+    pill_h: i32,
+    margin: i32,
+    pos: configpkg.Config.ResizeOverlayPosition,
+) c.RECT {
+    const w = std.math.clamp(pill_w, 1, @max(1, parent_w - margin * 2));
+    const h = std.math.clamp(pill_h, 1, @max(1, parent_h - top_inset - margin * 2));
+    const left: i32 = switch (pos) {
+        .@"top-left", .@"bottom-left" => margin,
+        .@"top-right", .@"bottom-right" => @max(margin, parent_w - w - margin),
+        .center, .@"top-center", .@"bottom-center" => @max(margin, @divTrunc(parent_w - w, 2)),
+    };
+    const top: i32 = switch (pos) {
+        .@"top-left", .@"top-center", .@"top-right" => top_inset + margin,
+        .@"bottom-left", .@"bottom-center", .@"bottom-right" => @max(top_inset + margin, parent_h - h - margin),
+        .center => @max(top_inset + margin, top_inset + @divTrunc(parent_h - top_inset - h, 2)),
+    };
+    return .{
+        .left = left,
+        .top = top,
+        .right = left + w,
+        .bottom = top + h,
+    };
+}
+
+fn layoutResize(self: *SurfaceOverlay) void {
+    const hwnd = self.resize_hwnd orelse return;
+    if (self.resize_len == 0) return;
+    const s = self.surface();
+    const dpi = c.GetDpiForWindow(hwnd);
+    const parent_w: i32 = @intCast(s.size.width);
+    const parent_h: i32 = @intCast(s.size.height);
+    const top_inset = self.topBannerHeight(dpi);
+    const m = scale(resize_margin, dpi);
+    const h = scale(resize_height, dpi);
+    const char_w = @max(6, scale(8, dpi));
+    const desired_w = @max(scale(84, dpi), @as(i32, @intCast(self.resize_len)) * char_w + scale(24, dpi));
+    const r = computeResizeOverlayRect(
+        parent_w,
+        parent_h,
+        top_inset,
+        desired_w,
+        h,
+        m,
+        s.app.config.@"resize-overlay-position",
+    );
+    _ = c.SetWindowPos(
+        hwnd,
+        null,
+        r.left,
+        r.top,
+        r.right - r.left,
+        r.bottom - r.top,
+        c.SWP_NOACTIVATE | c.SWP_NOZORDER,
+    );
 }
 
 pub fn setUnfocusedSplit(self: *SurfaceOverlay, unfocused: bool) void {
@@ -698,6 +822,90 @@ pub fn pillWndProc(
     return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
+fn paintResize(self: *SurfaceOverlay, hwnd: c.HWND) void {
+    var ps: c.PAINTSTRUCT = .{};
+    const hdc = c.BeginPaint(hwnd, &ps) orelse return;
+    defer _ = c.EndPaint(hwnd, &ps);
+
+    var rect: c.RECT = .{};
+    _ = c.GetClientRect(hwnd, &rect);
+    const w = rect.right - rect.left;
+    const h = rect.bottom - rect.top;
+    if (w <= 0 or h <= 0 or self.resize_len == 0) return;
+
+    const s = self.surface();
+    const palette = TabBar.Palette.init(&s.app.config);
+    const dpi = c.GetDpiForWindow(hwnd);
+
+    fill(hdc, rect, palette.bar);
+    drawRectBorder(hdc, rect, palette.separator);
+
+    const old_font = if (self.font) |f| c.SelectObject(hdc, f) else null;
+    defer if (old_font) |o| {
+        _ = c.SelectObject(hdc, o);
+    };
+    _ = c.SetBkMode(hdc, c.TRANSPARENT);
+    _ = c.SetTextColor(hdc, palette.text);
+
+    var wide_buf: [32]u16 = undefined;
+    if (std.unicode.utf8ToUtf16Le(&wide_buf, self.resize_text[0..self.resize_len])) |n| {
+        var tr: c.RECT = .{
+            .left = scale(8, dpi),
+            .top = 0,
+            .right = w - scale(8, dpi),
+            .bottom = h,
+        };
+        _ = c.DrawTextW(
+            hdc,
+            &wide_buf,
+            @intCast(n),
+            &tr,
+            c.DT_SINGLELINE | c.DT_VCENTER | c.DT_CENTER | c.DT_NOPREFIX,
+        );
+    } else |_| {}
+}
+
+pub fn resizeWndProc(
+    hwnd: c.HWND,
+    msg: c.UINT,
+    wparam: c.WPARAM,
+    lparam: c.LPARAM,
+) callconv(.winapi) c.LRESULT {
+    if (msg == c.WM_NCCREATE) {
+        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
+        const self: *SurfaceOverlay = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        self.resize_hwnd = hwnd;
+        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+        return c.DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+
+    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
+    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
+    const self: *SurfaceOverlay = @ptrFromInt(ptr);
+
+    switch (msg) {
+        c.WM_PAINT => {
+            self.paintResize(hwnd);
+            return 0;
+        },
+        c.WM_ERASEBKGND => return 1,
+        c.WM_TIMER => if (wparam == resize_hide_timer_id) {
+            _ = c.KillTimer(hwnd, resize_hide_timer_id);
+            self.resize_len = 0;
+            _ = c.ShowWindow(hwnd, c.SW_HIDE);
+            return 0;
+        },
+        c.WM_NCDESTROY => {
+            _ = c.KillTimer(hwnd, resize_hide_timer_id);
+            _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, 0);
+            self.resize_hwnd = null;
+            return 0;
+        },
+        else => {},
+    }
+    return c.DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
 pub fn dimWndProc(
     hwnd: c.HWND,
     msg: c.UINT,
@@ -868,4 +1076,38 @@ test "SurfaceOverlay formatPillText" {
     const tables = [_][:0]const u8{"resize"};
     const s = formatPillText(&buf, true, .healthy, &tables, &.{}, "https://ghostty.org");
     try testing.expectEqualStrings("Read-Only | Key Table: resize | https://ghostty.org", s);
+}
+
+test "SurfaceOverlay computeResizeOverlayRect" {
+    const testing = std.testing;
+
+    const center = computeResizeOverlayRect(800, 600, 0, 100, 28, 16, .center);
+    try testing.expectEqual(@as(i32, 350), center.left);
+    try testing.expectEqual(@as(i32, 286), center.top);
+    try testing.expectEqual(@as(i32, 450), center.right);
+    try testing.expectEqual(@as(i32, 314), center.bottom);
+
+    const tl = computeResizeOverlayRect(800, 600, 34, 100, 28, 16, .@"top-left");
+    try testing.expectEqual(@as(i32, 16), tl.left);
+    try testing.expectEqual(@as(i32, 50), tl.top);
+
+    const tc = computeResizeOverlayRect(800, 600, 34, 100, 28, 16, .@"top-center");
+    try testing.expectEqual(@as(i32, 350), tc.left);
+    try testing.expectEqual(@as(i32, 50), tc.top);
+
+    const tr = computeResizeOverlayRect(800, 600, 34, 100, 28, 16, .@"top-right");
+    try testing.expectEqual(@as(i32, 684), tr.left);
+    try testing.expectEqual(@as(i32, 50), tr.top);
+
+    const bl = computeResizeOverlayRect(800, 600, 0, 100, 28, 16, .@"bottom-left");
+    try testing.expectEqual(@as(i32, 16), bl.left);
+    try testing.expectEqual(@as(i32, 556), bl.top);
+
+    const bc = computeResizeOverlayRect(800, 600, 0, 100, 28, 16, .@"bottom-center");
+    try testing.expectEqual(@as(i32, 350), bc.left);
+    try testing.expectEqual(@as(i32, 556), bc.top);
+
+    const br = computeResizeOverlayRect(800, 600, 0, 100, 28, 16, .@"bottom-right");
+    try testing.expectEqual(@as(i32, 684), br.left);
+    try testing.expectEqual(@as(i32, 556), br.top);
 }

@@ -356,6 +356,6 @@ If neither secret is configured (for example on unconfigured community forks), `
   - **DirectX 11 / D3D12 + Microsoft WARP Software Fallback Renderer:** Support GPU-less virtual machines (Hyper-V, VMware, QEMU), Windows Sandbox, and Remote Desktop (RDP) sessions where the Microsoft Basic Render Driver does not provide OpenGL 4.3, plus native DirectComposition transparency and HDR.
   - **WinGet Package (`microsoft/winget-pkgs`):** Automated manifest submission with `InstallerType: inno` and `Scope: user`.
 - **Phase 3 (Planned):**
-  - **Taskbar Jump Lists & Shell Auto-Discovery (`ICustomDestinationList`):** Jump List actions (_New Window_, _New Tab_, _Open Configuration_) and auto-discovered profiles for PowerShell 7, Windows PowerShell 5.1, `cmd.exe`, WSL distributions, Git Bash, and MSYS2.
+  - **Taskbar Jump Lists & Shell Auto-Discovery (`ICustomDestinationList`) (Shipped):** Jump List actions (_New Window_, _New Tab_) and auto-discovered profiles for PowerShell 7, Windows PowerShell 5.1, `cmd.exe`, WSL distributions, and Git Bash.
   - **Session Restore (`window-save-state`):** Persist and restore windows, tabs, splits, and working directories across restarts.
   - **Windows UI Automation (`UIAutomationCore.dll`):** Screen-reader accessibility (`IRawElementProviderSimple` / `ITextProvider`) for Windows Narrator and NVDA.

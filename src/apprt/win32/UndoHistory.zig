@@ -26,11 +26,27 @@ pub const SplitOp = struct {
     tree: SplitView.Tree,
     focused: *Surface,
     anchor: *Surface,
+    expected_count: usize,
 
     pub fn deinit(self: *SplitOp) void {
         self.tree.deinit();
     }
 };
+
+fn countLeaves(tree: *const SplitView.Tree) usize {
+    var n: usize = 0;
+    var it = tree.iterator();
+    while (it.next()) |_| n += 1;
+    return n;
+}
+
+fn isSubset(smaller: *const SplitView.Tree, larger: *const SplitView.Tree) bool {
+    var it = smaller.iterator();
+    while (it.next()) |node| {
+        if (larger.locate(node.view) == null) return false;
+    }
+    return true;
+}
 
 pub const CloseTabsOp = struct {
     window: *Window,
@@ -198,6 +214,8 @@ pub fn recordCloseSplit(
     anchor_surface: *Surface,
 ) void {
     if (!self.enabled(app)) return;
+    const old_count = countLeaves(old_tree);
+    if (old_count <= 1) return;
     const alloc = app.core_app.alloc;
     const cloned = old_tree.clone(alloc) catch return;
     closed_surface.detachFromWindow();
@@ -206,6 +224,7 @@ pub fn recordCloseSplit(
             .tree = cloned,
             .focused = closed_surface,
             .anchor = anchor_surface,
+            .expected_count = old_count - 1,
         },
     });
 }
@@ -321,6 +340,15 @@ fn applyOp(
             const win = loc.window;
             const tab = &win.tabs.items[loc.tab_index];
 
+            const cur_count = countLeaves(&tab.tree);
+            const target_count = countLeaves(&s.tree);
+            if (cur_count != s.expected_count) return false;
+            if (cur_count <= target_count) {
+                if (!isSubset(&tab.tree, &s.tree)) return false;
+            } else {
+                if (!isSubset(&s.tree, &tab.tree)) return false;
+            }
+
             var cur_clone = tab.tree.clone(alloc) catch return false;
             const prev_focused = tab.focused;
 
@@ -352,6 +380,7 @@ fn applyOp(
                         .tree = cur_clone,
                         .focused = prev_focused,
                         .anchor = s.anchor,
+                        .expected_count = target_count,
                     },
                 },
             }) catch {

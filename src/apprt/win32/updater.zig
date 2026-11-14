@@ -1154,7 +1154,7 @@ fn launchInstallerUpgrade(alloc: Allocator, setup_exe_w: [:0]const u16) bool {
     var pi: windows.PROCESS_INFORMATION = undefined;
 
     if (!windows.exp.kernel32.CreateProcessW(
-        setup_exe_w.ptr,
+        @constCast(setup_exe_w.ptr),
         cmd_w.ptr,
         null,
         null,
@@ -1194,6 +1194,9 @@ fn launchPortableUpgrade(
     @memcpy(old_exe_buf[0..len], exe_slice);
     @memcpy(old_exe_buf[len .. len + suffix.len], suffix);
     old_exe_buf[len + suffix.len] = 0;
+
+    const ps_path = systemPowerShellPath(alloc) catch return false;
+    defer alloc.free(ps_path);
 
     const exe_utf8 = std.unicode.utf16LeToUtf8Alloc(alloc, exe_slice) catch return false;
     defer alloc.free(exe_utf8);
@@ -1244,7 +1247,7 @@ fn launchPortableUpgrade(
     const renamed = MoveFileExW(@ptrCast(&exe_buf), @ptrCast(&old_exe_buf), MOVEFILE_REPLACE_EXISTING).toBool();
 
     if (!windows.exp.kernel32.CreateProcessW(
-        null,
+        ps_path.ptr,
         cmd_w.ptr,
         null,
         null,
@@ -1325,6 +1328,8 @@ test "updater: isNewerVersion" {
     try testing.expect(isNewerVersion("1.3.1-dev", "v1.3.1"));
     try testing.expect(isNewerVersion("1.3.1-windows.1", "v1.3.1-windows.2"));
     try testing.expect(isNewerVersion("1.3.1-windows.1", "windows-v1.3.1-windows.2"));
+    try testing.expect(isNewerVersion("1.4.1-windows.15400.gffffff0", "windows-v1.4.1-windows.15401.g0123456"));
+    try testing.expect(!isNewerVersion("1.4.1-windows.15401.g0123456", "windows-v1.4.1-windows.15400.gffffff0"));
     try testing.expect(isNewerVersion("1.4.1-windows.9abcdef", "windows-v1.4.1-windows.1234567"));
     try testing.expect(!isNewerVersion("1.4.1-windows.1234567", "windows-v1.4.1-windows.1234567"));
     try testing.expect(!isNewerVersion("1.3.1", "v1.3.1"));

@@ -63,9 +63,16 @@ if ($hasAzureSigning) {
             Where-Object { $_.FullName -match '\\x64\\Azure\.CodeSigning\.Dlib\.dll$' } |
             Select-Object -First 1
         if (-not $existingDlib) {
-            $nupkg = Join-Path $workDir "Microsoft.Trusted.Signing.Client.nupkg"
+            $tsVersion = "1.0.95"
+            $tsSha256 = "3bfcf1e0a3cb42af1692f0a8ed45c15de070c2de86f28a59b2795d904d8a920f"
+            $nupkg = Join-Path $workDir "Microsoft.Trusted.Signing.Client.$tsVersion.nupkg"
             $extractDir = Join-Path $workDir "pkg"
-            Invoke-WebRequest -UseBasicParsing -OutFile $nupkg "https://www.nuget.org/api/v2/package/Microsoft.Trusted.Signing.Client"
+            Invoke-WebRequest -UseBasicParsing -OutFile $nupkg "https://api.nuget.org/v3-flatcontainer/microsoft.trusted.signing.client/$tsVersion/microsoft.trusted.signing.client.$tsVersion.nupkg"
+            $actualHash = (Get-FileHash -Algorithm SHA256 $nupkg).Hash.ToLowerInvariant()
+            if ($actualHash -ne $tsSha256) {
+                Remove-Item -Force $nupkg -ErrorAction SilentlyContinue
+                throw "SHA-256 mismatch for Microsoft.Trusted.Signing.Client.$tsVersion.nupkg: expected $tsSha256, got $actualHash"
+            }
             if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
             Add-Type -AssemblyName System.IO.Compression.FileSystem
             [IO.Compression.ZipFile]::ExtractToDirectory($nupkg, $extractDir)

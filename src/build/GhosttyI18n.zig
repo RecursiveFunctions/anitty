@@ -19,7 +19,7 @@ pub fn init(b: *std.Build, cfg: *const Config) !GhosttyI18n {
     var steps: std.ArrayList(*std.Build.Step) = .empty;
     defer steps.deinit(b.allocator);
 
-    const po2mo = if (cfg.target.result.os.tag == .windows or builtin.os.tag == .windows)
+    const po2mo: ?*std.Build.Step.Compile = if (cfg.target.result.os.tag == .windows or b.graph.host.result.os.tag == .windows)
         b.addExecutable(.{
             .name = "po2mo",
             .root_module = b.createModule(.{

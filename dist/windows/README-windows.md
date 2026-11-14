@@ -240,20 +240,20 @@ Platform limitations:
   without GPU acceleration) the renderer cannot start.
 - **OSC 52 clipboard read** does not work: ConPTY does not forward the
   query to the terminal. OSC 52 clipboard writes work.
-- **`copy-on-select = primary`**, the default outside Linux, does nothing
-  because Windows has no selection clipboard. Set `copy-on-select =
-clipboard` to copy selections to the clipboard.
+- **`copy-on-select = primary`** copies selections to the internal Win32
+  selection buffer (pasted with `shift+ins` or middle-click); set
+  `copy-on-select = clipboard` to also copy selections to the Windows
+  system clipboard (`CF_UNICODETEXT` + `CF_HTML`).
 - **win32-input-mode** (`CSI ? 9001 h`), which ConPTY requests at startup,
   is not supported. Input is sent as VT sequences instead.
 - **Elevated and non-elevated instances** cannot talk to each other
   (`+new-tab`, `+new-window`), because Windows blocks the message from a
   lower integrity level.
-- **Secure Input (`toggle_secure_input` / `auto-secure-input`)** is not
-  available on Windows: unlike macOS (`EnableSecureEventInput`), standard
-  user-mode Win32 processes cannot block same-integrity-level `WH_KEYBOARD_LL`
-  hooks or `GetAsyncKeyState` polling without an Authenticode-signed
-  `uiAccess="true"` manifest installed under `Program Files` or a kernel
-  driver.
+- **Secure Input (`toggle_secure_input` / `auto-secure-input`)** excludes the
+  Ghostty window from screen capture and recording via
+  `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` and displays a lock
+  indicator, though user-mode Win32 processes cannot block same-integrity-level
+  `WH_KEYBOARD_LL` hooks without `uiAccess="true"`.
 - The "Open Ghostty here" entry only appears under "Show more options".
 - **Resizing without the bundled ConPTY** (`conpty.dll` and
   `OpenConsole.exe` missing from the `bin` folder) loses lines at the top
@@ -356,15 +356,23 @@ Three signing modes are supported via GitHub Actions repository secrets (or loca
 
 If no signing secret is configured (for example on unconfigured community forks), `sign-file.ps1` logs a notice and exits `0` so CI builds still succeed.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- **Committers and reviewers:** [`@RecursiveFunctions`](https://github.com/RecursiveFunctions) and [repository contributors](https://github.com/RecursiveFunctions/ghostty-windows/graphs/contributors)
+- **Approvers:** [`@RecursiveFunctions`](https://github.com/RecursiveFunctions)
+- **Privacy policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it (for example, invoking **Check for Updates** from the Command Palette to query GitHub Releases or initiating an outbound `ghostty +ssh` session). Crash minidumps are written strictly to the local disk (`%LOCALAPPDATA%\ghostty\crash`) and are never transmitted automatically.
+
 ## Roadmap
 
 - **Phase 1 (Shipped):**
-  - Prebuilt Authenticode signing pipeline (`dist/windows/sign-file.ps1` supporting Azure Trusted Signing OIDC and PFX certificates).
+  - Prebuilt Authenticode signing pipeline (`dist/windows/sign-file.ps1` supporting SignPath.io, Azure Trusted Signing OIDC, and PFX certificates).
   - SHA-256 verified automatic in-app updates (`check_for_updates`) for both Inno Setup installer and Portable ZIP installations.
 - **Phase 2 (Next):**
-  - **DirectX 11 / D3D12 + Microsoft WARP Software Fallback Renderer:** Support GPU-less virtual machines (Hyper-V, VMware, QEMU), Windows Sandbox, and Remote Desktop (RDP) sessions where the Microsoft Basic Render Driver does not provide OpenGL 4.3, plus native DirectComposition transparency and HDR.
+  - **DirectX 11 / DXGI Flip-Model + Microsoft WARP Software Fallback Presenter (Shipped):** Zero-dependency `d3d11_presenter.zig` supporting `WGL_NV_DX_interop2` and `D3D_DRIVER_TYPE_WARP` (`GHOSTTY_WIN32_PRESENTER=d3d11|warp`).
   - **WinGet Package (`microsoft/winget-pkgs`):** Automated manifest submission with `InstallerType: inno` and `Scope: user`.
 - **Phase 3 (Planned):**
   - **Taskbar Jump Lists & Shell Auto-Discovery (`ICustomDestinationList`) (Shipped):** Jump List actions (_New Window_, _New Tab_) and auto-discovered profiles for PowerShell 7, Windows PowerShell 5.1, `cmd.exe`, WSL distributions, and Git Bash.
-  - **Session Restore (`window-save-state`):** Persist and restore windows, tabs, splits, and working directories across restarts.
+  - **Session Restore (`window-save-state`) (Shipped):** Persist and restore windows, tabs, splits, and working directories across restarts.
   - **Windows UI Automation (`UIAutomationCore.dll`):** Screen-reader accessibility (`IRawElementProviderSimple` / `ITextProvider`) for Windows Narrator and NVDA.

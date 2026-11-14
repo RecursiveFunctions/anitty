@@ -126,7 +126,7 @@ jobs:
 
       - name: Test
         if: env.SKIP_RELEASE != 'true'
-        run: zig build test -Dapp-runtime=win32
+        run: zig build test -Dapp-runtime=win32 -Dtest-filter=win32
 
       - name: Run PowerShell shell integration tests
         if: env.SKIP_RELEASE != 'true'

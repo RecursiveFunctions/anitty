@@ -368,7 +368,20 @@ pub fn waitPresented(self: *Surface, timeout_ms: u32) bool {
 
 fn focusChanged(self: *Surface, focused: bool) void {
     self.focused = focused;
-    if (focused) self.setBellRinging(false);
+    if (focused) {
+        self.setBellRinging(false);
+    } else {
+        self.char_decoder = .{};
+        if (self.dead_key_pending) {
+            self.dead_key_pending = false;
+            if (self.initialized) {
+                self.core_surface.preeditCallback(null) catch |err| {
+                    log.warn("error in preedit callback err={}", .{err});
+                };
+            }
+        }
+        key.drainDeadKeyState(c.GetKeyboardLayout(0));
+    }
     const hwnd = self.hwnd orelse return;
     _ = c.PostMessageW(hwnd, WM_GHOSTTY_FOCUS, 0, 0);
 }
@@ -970,6 +983,8 @@ pub fn wndProc(
         },
 
         c.WM_INPUTLANGCHANGE => log.debug("keyboard layout changed hkl=0x{x}", .{@as(usize, @bitCast(lparam))}),
+
+        c.WM_DEADCHAR, c.WM_SYSDEADCHAR => return 0,
 
         c.WM_SYSCHAR => {
             if (self.sys_char_passthrough) return c.DefWindowProcW(hwnd, msg, wparam, lparam);

@@ -55,8 +55,8 @@ pub fn translateState(
         .mods = mods,
     };
 
-    if (action == .release) {
-        event.unshifted_codepoint = unshiftedCodepoint(vk, hkl);
+    if (action == .release or isModifierVk(vk)) {
+        if (!isModifierVk(vk)) event.unshifted_codepoint = unshiftedCodepoint(vk, hkl);
         return event;
     }
 
@@ -71,8 +71,10 @@ pub fn translateState(
         event.utf8 = buf[0..utf16ToUtf8(wbuf[0..1], buf)];
         return event;
     }
+    if (n == 0) return event;
 
-    const len = utf16ToUtf8(wbuf[0..@intCast(n)], buf);
+    const wlen = @min(@as(usize, @intCast(n)), wbuf.len);
+    const len = utf16ToUtf8(wbuf[0..wlen], buf);
     if (len == 0) return event;
     event.utf8 = buf[0..len];
 
@@ -83,7 +85,8 @@ pub fn translateState(
         unshifted_state[c.VK_RSHIFT] = 0;
         var ubuf: [8]u16 = undefined;
         const un = c.ToUnicodeEx(vk, native & 0xFF, &unshifted_state, &ubuf, ubuf.len, 0x4, hkl);
-        if (un != n or (n > 0 and !std.mem.eql(u16, ubuf[0..@intCast(n)], wbuf[0..@intCast(n)]))) {
+        const ulen: usize = if (un > 0) @min(@as(usize, @intCast(un)), ubuf.len) else 0;
+        if (un != n or !std.mem.eql(u16, ubuf[0..ulen], wbuf[0..wlen])) {
             event.consumed_mods.shift = true;
         }
     }
@@ -223,6 +226,33 @@ fn modsFromState(state: *const [256]u8) input.Mods {
     if (down(state, c.VK_RMENU) and !down(state, c.VK_LMENU)) mods.sides.alt = .right;
     if (down(state, c.VK_RWIN) and !down(state, c.VK_LWIN)) mods.sides.super = .right;
     return mods;
+}
+
+pub fn isModifierVk(vk: c.UINT) bool {
+    return switch (vk) {
+        c.VK_SHIFT,
+        c.VK_LSHIFT,
+        c.VK_RSHIFT,
+        c.VK_CONTROL,
+        c.VK_LCONTROL,
+        c.VK_RCONTROL,
+        c.VK_MENU,
+        c.VK_LMENU,
+        c.VK_RMENU,
+        c.VK_LWIN,
+        c.VK_RWIN,
+        c.VK_CAPITAL,
+        c.VK_NUMLOCK,
+        => true,
+        else => false,
+    };
+}
+
+pub fn drainDeadKeyState(hkl: ?c.HKL) void {
+    const empty: [256]u8 = @splat(0);
+    var wbuf: [8]u16 = undefined;
+    _ = c.ToUnicodeEx(c.VK_SPACE, 0x39, &empty, &wbuf, wbuf.len, 0, hkl);
+    _ = c.ToUnicodeEx(c.VK_SPACE, 0x39, &empty, &wbuf, wbuf.len, 0, hkl);
 }
 
 fn clearCtrl(state: *[256]u8) void {
@@ -613,4 +643,20 @@ test "WM_CHAR text becomes key events" {
         try testing.expectEqualStrings("\r", w.buffered());
     }
     try testing.expect(charEvent(0x01, &buf) == null);
+}
+
+test "isModifierVk and multi-unit utf16ToUtf8" {
+    const testing = std.testing;
+    try testing.expect(isModifierVk(c.VK_SHIFT));
+    try testing.expect(isModifierVk(c.VK_LSHIFT));
+    try testing.expect(isModifierVk(c.VK_RCONTROL));
+    try testing.expect(isModifierVk(c.VK_RMENU));
+    try testing.expect(isModifierVk(c.VK_LWIN));
+    try testing.expect(isModifierVk(c.VK_CAPITAL));
+    try testing.expect(!isModifierVk('A'));
+    try testing.expect(!isModifierVk(c.VK_SPACE));
+
+    var buf: [16]u8 = undefined;
+    const len = utf16ToUtf8(&.{ '~', '/' }, &buf);
+    try testing.expectEqualStrings("~/", buf[0..len]);
 }

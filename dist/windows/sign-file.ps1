@@ -54,12 +54,7 @@ $signtool = Find-SignTool
 Write-Host "Using signtool: $signtool"
 
 if ($hasSignPath) {
-    Write-Host "Signing '$FilePath' with SignPath Foundation EV ($($env:SIGNPATH_PROJECT_SLUG)/$($env:SIGNPATH_SIGNING_POLICY_SLUG))..."
-    if (-not (Get-Module -ListAvailable -Name SignPath)) {
-        Install-Module -Name SignPath -Scope CurrentUser -Force -AllowClobber
-    }
-    Import-Module SignPath -Force
-
+    Write-Host "Signing '$FilePath' with SignPath ($($env:SIGNPATH_PROJECT_SLUG)/$($env:SIGNPATH_SIGNING_POLICY_SLUG))..."
     $workDir = Join-Path $env:TEMP ("ghostty-signpath-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force $workDir | Out-Null
     try {
@@ -70,20 +65,48 @@ if ($hasSignPath) {
 
         Compress-Archive -LiteralPath $FilePath -DestinationPath $inputZip -Force
 
-        $submitParams = @{
-            OrganizationId    = $env:SIGNPATH_ORGANIZATION_ID
-            ApiToken          = (ConvertTo-SecureString $env:SIGNPATH_API_TOKEN -AsPlainText -Force)
-            ProjectSlug       = $env:SIGNPATH_PROJECT_SLUG
-            SigningPolicySlug = $env:SIGNPATH_SIGNING_POLICY_SLUG
-            InputArtifactPath = $inputZip
-            OutputArtifactPath = $outputZip
-            WaitForCompletion = $true
-        }
+        $baseUrl = "https://app.signpath.io/API/v1/$($env:SIGNPATH_ORGANIZATION_ID)/SigningRequests"
+        $authHeader = "Authorization: Bearer $($env:SIGNPATH_API_TOKEN)"
+        $curlArgs = @(
+            "-sS", "-f", "-X", "POST",
+            "-H", $authHeader,
+            "-F", "ProjectSlug=$($env:SIGNPATH_PROJECT_SLUG)",
+            "-F", "SigningPolicySlug=$($env:SIGNPATH_SIGNING_POLICY_SLUG)",
+            "-F", "Artifact=@$inputZip"
+        )
         if (-not [string]::IsNullOrWhiteSpace($env:SIGNPATH_ARTIFACT_CONFIGURATION_SLUG)) {
-            $submitParams.ArtifactConfigurationSlug = $env:SIGNPATH_ARTIFACT_CONFIGURATION_SLUG
+            $curlArgs += @("-F", "ArtifactConfigurationSlug=$($env:SIGNPATH_ARTIFACT_CONFIGURATION_SLUG)")
+        }
+        $curlArgs += $baseUrl
+
+        $submitJson = & curl.exe @curlArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "SignPath submission failed with exit code $LASTEXITCODE"
+        }
+        $submitObj = $submitJson | ConvertFrom-Json
+        $reqId = $submitObj.signingRequestId
+        Write-Host "Submitted SignPath signing request: $reqId"
+
+        $statusUrl = "$baseUrl/$reqId"
+        $headers = @{ Authorization = "Bearer $($env:SIGNPATH_API_TOKEN)" }
+        $signedUrl = $null
+        for ($i = 0; $i -lt 120; $i++) {
+            Start-Sleep -Seconds 3
+            $statusObj = Invoke-RestMethod -Uri $statusUrl -Headers $headers -Method Get
+            Write-Host "  SignPath status: $($statusObj.status) ($($statusObj.workflowStatus))"
+            if ($statusObj.isFinalStatus) {
+                if ($statusObj.status -ne "Completed") {
+                    throw "SignPath signing request $reqId finished with status $($statusObj.status) ($($statusObj.workflowStatus))"
+                }
+                $signedUrl = $statusObj.signedArtifactLink
+                break
+            }
+        }
+        if (-not $signedUrl) {
+            throw "Timed out waiting for SignPath signing request $reqId"
         }
 
-        Submit-SigningRequest @submitParams | Out-Null
+        Invoke-WebRequest -UseBasicParsing -Uri $signedUrl -Headers $headers -OutFile $outputZip
         Expand-Archive -LiteralPath $outputZip -DestinationPath $extractDir -Force
         Copy-Item -LiteralPath (Join-Path $extractDir $fileName) -Destination $FilePath -Force
     } finally {
@@ -173,10 +196,11 @@ if ($hasSignPath) {
 }
 
 Write-Host "Verifying Authenticode signature on '$FilePath'..."
-& $signtool verify /pa /v $FilePath
-if ($LASTEXITCODE -ne 0) {
-    throw "signtool verify failed for '$FilePath' with exit code $LASTEXITCODE"
+$authSig = Get-AuthenticodeSignature -LiteralPath $FilePath
+if ($null -eq $authSig.SignerCertificate -or $authSig.Status -eq "NotSigned" -or $authSig.Status -eq "HashMismatch") {
+    throw "Authenticode signature verification failed for '$FilePath': status=$($authSig.Status)"
 }
+Write-Host "Authenticode signature present: Subject='$($authSig.SignerCertificate.Subject)' Thumbprint='$($authSig.SignerCertificate.Thumbprint)' Status='$($authSig.Status)'"
 
 if ($env:GITHUB_ENV) {
     [IO.File]::AppendAllText($env:GITHUB_ENV, "CODESIGNED=true`n")

@@ -9,13 +9,11 @@ that renders with OpenGL and runs shells through ConPTY. It is
 experimental: the features below work, but see
 [Known issues](#known-issues) before relying on it.
 
-## Provenance & AI Assistance Disclosure
+## Provenance & AI Disclosure
 
-In accordance with Ghostty's [`AI_POLICY.md`](../../AI_POLICY.md), this section documents the provenance and AI assistance involved in this Windows port:
-
-- **Upstream Base:** Built on [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) by Mitchell Hashimoto and contributors.
-- **Win32 Runtime Foundation:** Initial Win32 runtime (`src/apprt/win32/`), WGL OpenGL provider (`src/renderer/opengl/wgl.zig`), and Windows packaging scripts were derived from [`phalladar/ghostty-windows`](https://github.com/phalladar/ghostty-windows) by Josh Auriemma.
-- **AI Assistance Disclosure:** The Zig 0.17 / Ghostty 1.4.1-dev rebase and port, automated CI release pipeline, and Win32 feature parity implementation (search overlay, command palette, tab overview, quick terminal, global hotkeys, DWM backdrop/transparency, dynamic OSC 10/11 chrome colors, live-session `undo`/`redo`, session save/restore, `check_for_updates`, `ghostty +ssh` remote terminfo auto-install, WinRT toast notifications, Taskbar Jump Lists, OLE drag-and-drop, `CF_HTML` rich clipboard, Media Foundation bell audio, DirectWrite font fallback, D3D11/WARP fallback presenter, Windows `.mo` localization, unfocused split dimming, `bell-features = border`, and Dear ImGui terminal inspector) were developed with AI assistance using **Kilo Code**, with human review, build verification, and runtime testing.
+- Upstream terminal core: [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) by Mitchell Hashimoto and contributors.
+- Initial Win32 runtime (`src/apprt/win32/`), WGL setup, and packaging scripts: [`phalladar/ghostty-windows`](https://github.com/phalladar/ghostty-windows) by Josh Auriemma.
+- Per [`AI_POLICY.md`](../../AI_POLICY.md): the Zig 0.17 rebase, CI release pipeline, and additional Win32 runtime features in this fork were developed with AI assistance (Kilo Code).
 
 ## Requirements
 
@@ -209,8 +207,8 @@ the same build, so keep it if you build Ghostty yourself.
 ## Troubleshooting
 
 - **SmartScreen warns about the installer or `ghostty.exe`.** If a build was
-  produced without code-signing secrets configured (see
-  [Code signing & automatic in-app updates](#code-signing--automatic-in-app-updates)),
+  produced without a public CA certificate attached (see
+  [Code signing policy](#code-signing-policy)),
   choose "More info", then "Run anyway".
 - **Ghostty exits at start or shows no window.** Capture a log (see
   [Logs](#logs)) and look for OpenGL errors. Ghostty needs OpenGL 4.3; update
@@ -324,57 +322,14 @@ The installer packages whatever `bin\` holds in the staged tree. Version
 resynchronise the cursor with the terminal after a resize. For a dev
 build, copy the two files into `zig-out\bin`.
 
-## Code signing & automatic in-app updates
+## Updating
 
-### Automatic in-app updates (`check_for_updates`)
-
-Open the Command Palette (`ctrl+shift+p`) and run **Check for Updates**. Ghostty queries the GitHub Releases API over `WinHTTP`:
-
-1. Detects whether Ghostty is running from an **Inno Setup installation** (`unins000.exe` present in the parent directory) or a **Portable ZIP** layout (`share\ghostty` present without `unins000.exe`).
-2. When a newer release is available and you click **Install & Restart**, Ghostty downloads `SHA256SUMS.txt` and the matching asset (`Ghostty-Windows-Setup-x64.exe` or `Ghostty-Windows-x64.zip`) into `%TEMP%\ghostty-update-<tick>`.
-3. Verifies the downloaded file's SHA-256 digest against `SHA256SUMS.txt` before executing or extracting anything.
-4. Applies the update:
-   - **Installer mode:** Launches `Ghostty-Windows-Setup-x64.exe /SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NOCANCEL /SP-` and exits so the installer upgrades and relaunches Ghostty automatically.
-   - **Portable mode:** Extracts the verified ZIP, renames the running `ghostty.exe` to `ghostty.exe.old` (cleaned up on next launch), copies the updated tree into the portable folder after exit, and restarts `ghostty.exe`.
-
-### Code signing (`dist/windows/sign-file.ps1` & SignPath Foundation EV)
-
-The release workflow (`.github/workflows/release-windows.yml`) signs `ghostty.exe` prior to `make-zip.ps1` and signs `ghostty-<version>-windows-x86_64-setup.exe` prior to generating `SHA256SUMS.txt`.
-
-Three signing modes are supported via GitHub Actions repository secrets (or local environment variables):
-
-1. **SignPath Foundation (Free Open-Source EV Code Signing — Recommended):**
-   - Apply at [about.signpath.io/product/open-source](https://about.signpath.io/product/open-source) pointing to `https://github.com/RecursiveFunctions/ghostty-windows`.
-   - In SignPath, create project `ghostty-windows`, upload `dist/windows/signpath-artifact-configuration.xml` as the Default Artifact Configuration, link the GitHub Actions Trusted Build System connector to `.github/workflows/release-windows.yml`, and create a signing policy `release-signing`.
-   - Add these repository secrets in GitHub (**Settings → Secrets and variables → Actions**):
-     - `SIGNPATH_API_TOKEN` (CI User API token from SignPath)
-     - `SIGNPATH_ORGANIZATION_ID` (your SignPath Organization UUID)
-     - `SIGNPATH_PROJECT_SLUG` (optional, defaults to `ghostty-windows`)
-     - `SIGNPATH_SIGNING_POLICY_SLUG` (optional, defaults to `release-signing`)
-2. **Azure Trusted Signing (OIDC or Service Principal):**
-   Set `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`, and Azure credentials (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and OIDC or `AZURE_CLIENT_SECRET`). `sign-file.ps1` automatically fetches `Microsoft.Trusted.Signing.Client` (`Azure.CodeSigning.Dlib.dll`), signs with `http://timestamp.acs.microsoft.com`, and runs `signtool verify /pa`.
-3. **Base64 PFX Certificate:**
-   Set `WINDOWS_PFX_BASE64` and `WINDOWS_PFX_PASSWORD`. `sign-file.ps1` decodes the PFX to a temporary file, signs via `signtool.exe sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256`, verifies with `signtool verify /pa`, and securely removes the temporary PFX.
-
-If no signing secret is configured (for example on unconfigured community forks), `sign-file.ps1` logs a notice and exits `0` so CI builds still succeed.
+Open the Command Palette (`ctrl+shift+p`) and run **Check for Updates**. When a newer GitHub release is available, Ghostty downloads `SHA256SUMS.txt` and the matching asset (`Ghostty-Windows-Setup-x64.exe` for installer setups, `Ghostty-Windows-x64.zip` for portable setups), verifies the SHA-256 checksum, and installs the update in place.
 
 ## Code signing policy
 
 Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
-- **Committers and reviewers:** [`@RecursiveFunctions`](https://github.com/RecursiveFunctions) and [repository contributors](https://github.com/RecursiveFunctions/ghostty-windows/graphs/contributors)
+- **Committers and reviewers:** [`@RecursiveFunctions`](https://github.com/RecursiveFunctions) and [contributors](https://github.com/RecursiveFunctions/ghostty-windows/graphs/contributors)
 - **Approvers:** [`@RecursiveFunctions`](https://github.com/RecursiveFunctions)
-- **Privacy policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it (for example, invoking **Check for Updates** from the Command Palette to query GitHub Releases or initiating an outbound `ghostty +ssh` session). Crash minidumps are written strictly to the local disk (`%LOCALAPPDATA%\ghostty\crash`) and are never transmitted automatically.
-
-## Roadmap
-
-- **Phase 1 (Shipped):**
-  - Prebuilt Authenticode signing pipeline (`dist/windows/sign-file.ps1` supporting SignPath.io, Azure Trusted Signing OIDC, and PFX certificates).
-  - SHA-256 verified automatic in-app updates (`check_for_updates`) for both Inno Setup installer and Portable ZIP installations.
-- **Phase 2 (Next):**
-  - **DirectX 11 / DXGI Flip-Model + Microsoft WARP Software Fallback Presenter (Shipped):** Zero-dependency `d3d11_presenter.zig` supporting `WGL_NV_DX_interop2` and `D3D_DRIVER_TYPE_WARP` (`GHOSTTY_WIN32_PRESENTER=d3d11|warp`).
-  - **WinGet Package (`microsoft/winget-pkgs`):** Automated manifest submission with `InstallerType: inno` and `Scope: user`.
-- **Phase 3 (Planned):**
-  - **Taskbar Jump Lists & Shell Auto-Discovery (`ICustomDestinationList`) (Shipped):** Jump List actions (_New Window_, _New Tab_) and auto-discovered profiles for PowerShell 7, Windows PowerShell 5.1, `cmd.exe`, WSL distributions, and Git Bash.
-  - **Session Restore (`window-save-state`) (Shipped):** Persist and restore windows, tabs, splits, and working directories across restarts.
-  - **Windows UI Automation (`UIAutomationCore.dll`):** Screen-reader accessibility (`IRawElementProviderSimple` / `ITextProvider`) for Windows Narrator and NVDA.
+- **Privacy policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.

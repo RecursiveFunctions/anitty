@@ -1539,53 +1539,6 @@ pub const StreamHandler = struct {
             return;
         }
 
-        // Attempt to parse this file-style URI using options appropriate
-        // for this OSC 7 context (e.g. kitty-shell-cwd expects the full,
-        // unencoded path).
-        const uri: std.Uri = internal_os.uri.parse(url, .{
-            .mac_address = comptime builtin.target.os.tag != .macos,
-            .raw_path = std.mem.startsWith(u8, url, "kitty-shell-cwd://"),
-        }) catch |e| {
-            log.warn("invalid url in OSC 7: {}", .{e});
-            return;
-        };
-
-        if (!std.mem.eql(u8, "file", uri.scheme) and
-            !std.mem.eql(u8, "kitty-shell-cwd", uri.scheme))
-        {
-            log.warn("OSC 7 scheme must be file or kitty-shell-cwd, got: {s}", .{uri.scheme});
-            return;
-        }
-
-        var host_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
-        const host: []const u8 = osc7Host(uri, &host_buffer) catch |err| switch (err) {
-            error.UriMissingHost => if (builtin.target.os.tag == .windows) "" else {
-                log.warn("OSC 7 uri must contain a hostname: {}", .{err});
-                return;
-            },
-            error.NameTooLong => {
-                log.warn("failed to get full hostname for OSC 7 validation: {}", .{err});
-                return;
-            },
-        };
-
-        // OSC 7 is a little sketchy because anyone can send any value from
-        // any host (such an SSH session). The best practice terminals follow
-        // is to valid the hostname to be local.
-        const host_valid = (builtin.target.os.tag == .windows and host.len == 0) or
-            internal_os.hostname.isLocal(host) catch |err| switch (err) {
-                error.PermissionDenied,
-                error.Unexpected,
-                => {
-                    log.warn("failed to get hostname for OSC 7 validation: {}", .{err});
-                    return;
-                },
-            };
-        if (!host_valid) {
-            log.warn("OSC 7 host ({s}) must be local", .{host});
-            return;
-        }
-
         // We need the raw path, which might require unescaping. We try to
         // avoid making any heap allocations by using the stack first.
         var arena_alloc: std.heap.ArenaAllocator = .init(self.alloc);
@@ -1593,14 +1546,61 @@ pub const StreamHandler = struct {
         var stack_alloc: std.heap.BufferFirstAllocator = .init(&stack_alloc_buf, arena_alloc.allocator());
         defer arena_alloc.deinit();
         const path_alloc = stack_alloc.allocator();
-        const uri_path = try uri.path.toRawMaybeAlloc(path_alloc);
+
         const path = if (comptime builtin.target.os.tag == .windows)
-            try windowsPathFromUriPath(path_alloc, uri_path) orelse {
-                log.warn("OSC 7 path must be an absolute drive path: {s}", .{uri_path});
+            try windowsPwdPath(path_alloc, url) orelse {
+                log.warn("invalid url or path in OSC 7/9;9/1337: {s}", .{url});
                 return;
             }
-        else
-            uri_path;
+        else path: {
+            // Attempt to parse this file-style URI using options appropriate
+            // for this OSC 7 context (e.g. kitty-shell-cwd expects the full,
+            // unencoded path).
+            const uri: std.Uri = internal_os.uri.parse(url, .{
+                .mac_address = comptime builtin.target.os.tag != .macos,
+                .raw_path = std.mem.startsWith(u8, url, "kitty-shell-cwd://"),
+            }) catch |e| {
+                log.warn("invalid url in OSC 7: {}", .{e});
+                return;
+            };
+
+            if (!std.mem.eql(u8, "file", uri.scheme) and
+                !std.mem.eql(u8, "kitty-shell-cwd", uri.scheme))
+            {
+                log.warn("OSC 7 scheme must be file or kitty-shell-cwd, got: {s}", .{uri.scheme});
+                return;
+            }
+
+            var host_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
+            const host: []const u8 = osc7Host(uri, &host_buffer) catch |err| switch (err) {
+                error.UriMissingHost => {
+                    log.warn("OSC 7 uri must contain a hostname: {}", .{err});
+                    return;
+                },
+                error.NameTooLong => {
+                    log.warn("failed to get full hostname for OSC 7 validation: {}", .{err});
+                    return;
+                },
+            };
+
+            // OSC 7 is a little sketchy because anyone can send any value from
+            // any host (such an SSH session). The best practice terminals follow
+            // is to valid the hostname to be local.
+            const host_valid = internal_os.hostname.isLocal(host) catch |err| switch (err) {
+                error.PermissionDenied,
+                error.Unexpected,
+                => {
+                    log.warn("failed to get hostname for OSC 7 validation: {}", .{err});
+                    return;
+                },
+            };
+            if (!host_valid) {
+                log.warn("OSC 7 host ({s}) must be local", .{host});
+                return;
+            }
+
+            break :path try uri.path.toRawMaybeAlloc(path_alloc);
+        };
 
         log.debug("terminal pwd: {s}", .{path});
         try self.terminal.setPwd(path);
@@ -1620,11 +1620,101 @@ pub const StreamHandler = struct {
         }
     }
 
+    fn windowsPwdPath(alloc: Allocator, url: []const u8) Allocator.Error!?[]const u8 {
+        if (std.ascii.startsWithIgnoreCase(url, "file:") or
+            std.ascii.startsWithIgnoreCase(url, "kitty-shell-cwd:"))
+        {
+            const uri: std.Uri = internal_os.uri.parse(url, .{
+                .mac_address = true,
+                .raw_path = std.ascii.startsWithIgnoreCase(url, "kitty-shell-cwd://"),
+            }) catch return null;
+
+            if (!std.ascii.eqlIgnoreCase("file", uri.scheme) and
+                !std.ascii.eqlIgnoreCase("kitty-shell-cwd", uri.scheme))
+            {
+                return null;
+            }
+
+            var host_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
+            const host: []const u8 = osc7Host(uri, &host_buffer) catch |err| switch (err) {
+                error.UriMissingHost => "",
+                error.NameTooLong => return null,
+            };
+
+            const host_valid = host.len == 0 or (internal_os.hostname.isLocal(host) catch false);
+            if (!host_valid) return null;
+
+            const uri_path = try uri.path.toRawMaybeAlloc(alloc);
+            return try windowsPathFromUriPath(alloc, uri_path);
+        }
+
+        if (std.mem.indexOf(u8, url, "://") != null) return null;
+
+        var s = url;
+        if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
+            s = s[1 .. s.len - 1];
+        }
+        if (s.len >= 3 and s[0] == '/' and std.ascii.isAlphabetic(s[1]) and s[2] == ':') {
+            s = s[1..];
+        }
+        if (s.len == 0) return null;
+
+        for (s) |ch| {
+            if (ch < 0x20 or ch == 0x7f) return null;
+            switch (ch) {
+                '<', '>', '"', '|', '?', '*' => return null,
+                else => {},
+            }
+        }
+
+        if (s.len >= 2 and std.ascii.isAlphabetic(s[0]) and s[1] == ':') {
+            const rest = s[2..];
+            if (rest.len > 0 and rest[0] != '\\' and rest[0] != '/') return null;
+            if (std.mem.indexOfScalar(u8, rest, ':') != null) return null;
+
+            const out = try alloc.alloc(u8, if (rest.len == 0) 3 else s.len);
+            @memcpy(out[0..2], s[0..2]);
+            if (rest.len == 0) {
+                out[2] = '\\';
+            } else {
+                @memcpy(out[2..], rest);
+                std.mem.replaceScalar(u8, out[2..], '/', '\\');
+            }
+            return out;
+        }
+
+        if (s.len >= 5 and ((s[0] == '\\' and s[1] == '\\') or (s[0] == '/' and s[1] == '/'))) {
+            if (s[2] == '\\' or s[2] == '/') return null;
+            const after = s[2..];
+            if (std.mem.indexOfScalar(u8, after, ':') != null) return null;
+            const sep = std.mem.indexOfAny(u8, after, "\\/") orelse return null;
+            if (sep == 0 or sep + 1 >= after.len) return null;
+            if (after[sep + 1] == '\\' or after[sep + 1] == '/') return null;
+            const server = after[0..sep];
+            if (std.mem.eql(u8, server, ".") or std.mem.eql(u8, server, "?")) return null;
+            if (!(internal_os.hostname.isLocal(server) catch false)) return null;
+
+            const out = try alloc.dupe(u8, s);
+            std.mem.replaceScalar(u8, out, '/', '\\');
+            return out;
+        }
+
+        return null;
+    }
+
     fn windowsPathFromUriPath(alloc: Allocator, uri_path: []const u8) Allocator.Error!?[]const u8 {
         if (uri_path.len < 3 or uri_path[0] != '/' or
             !std.ascii.isAlphabetic(uri_path[1]) or uri_path[2] != ':') return null;
         const rest = uri_path[3..];
         if (rest.len > 0 and rest[0] != '/') return null;
+        if (std.mem.indexOfScalar(u8, rest, ':') != null) return null;
+        for (rest) |ch| {
+            if (ch < 0x20 or ch == 0x7f) return null;
+            switch (ch) {
+                '<', '>', '"', '|', '?', '*' => return null,
+                else => {},
+            }
+        }
 
         const out = try alloc.alloc(u8, if (rest.len == 0) 3 else uri_path.len - 1);
         @memcpy(out[0..2], uri_path[1..3]);
@@ -2222,5 +2312,49 @@ test "windowsPathFromUriPath: OSC 7 file URIs" {
         const uri_path = try uri.path.toRawMaybeAlloc(alloc);
         const path = (try StreamHandler.windowsPathFromUriPath(alloc, uri_path)).?;
         try testing.expectEqualStrings(case[2], path);
+    }
+}
+
+test "windowsPwdPath" {
+    const testing = std.testing;
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const cases = [_]struct { []const u8, ?[]const u8 }{
+        .{ "file:///C:/Users/x", "C:\\Users\\x" },
+        .{ "file:///C:/Program%20Files/App", "C:\\Program Files\\App" },
+        .{ "file://localhost/D:/work", "D:\\work" },
+        .{ "file://remote-nonexistent-host.invalid/C:/Users/x", null },
+        .{ "file:///C:/bad%7Cchar", null },
+        .{ "C:\\Users\\Ray\\code", "C:\\Users\\Ray\\code" },
+        .{ "\"C:\\Users\\Ray\\My Docs\"", "C:\\Users\\Ray\\My Docs" },
+        .{ "C:/Users/Ray", "C:\\Users\\Ray" },
+        .{ "/C:/Users/Ray", "C:\\Users\\Ray" },
+        .{ "C:", "C:\\" },
+        .{ "\"D:\"", "D:\\" },
+        .{ "\\\\localhost\\share\\folder", "\\\\localhost\\share\\folder" },
+        .{ "\"\\\\localhost\\share\\sub dir\"", "\\\\localhost\\share\\sub dir" },
+        .{ "//localhost/share/path", "\\\\localhost\\share\\path" },
+        .{ "\\\\remote-nonexistent-host.invalid\\share\\folder", null },
+        .{ "\\\\.\\pipe\\foo", null },
+        .{ "\\\\?\\C:\\foo", null },
+        .{ "\\\\localhost\\", null },
+        .{ "\\\\localhost", null },
+        .{ "C:relative", null },
+        .{ "relative\\path", null },
+        .{ "/home/user", null },
+        .{ "http://example.com/C:/foo", null },
+        .{ "C:\\bad|char", null },
+        .{ "C:\\bad\x07char", null },
+    };
+
+    for (cases) |case| {
+        const got = try StreamHandler.windowsPwdPath(alloc, case[0]);
+        if (case[1]) |want| {
+            try testing.expectEqualStrings(want, got.?);
+        } else {
+            try testing.expect(got == null);
+        }
     }
 }

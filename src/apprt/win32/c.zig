@@ -516,6 +516,7 @@ pub extern "user32" fn ToUnicodeEx(
 
 pub const HGLOBAL = *opaque {};
 pub const CF_UNICODETEXT: UINT = 13;
+pub const CF_HDROP: UINT = 15;
 pub const GMEM_MOVEABLE: UINT = 0x0002;
 
 pub extern "user32" fn OpenClipboard(owner: ?HWND) callconv(.winapi) BOOL;
@@ -524,6 +525,7 @@ pub extern "user32" fn EmptyClipboard() callconv(.winapi) BOOL;
 pub extern "user32" fn GetClipboardData(format: UINT) callconv(.winapi) ?HGLOBAL;
 pub extern "user32" fn SetClipboardData(format: UINT, mem: ?HGLOBAL) callconv(.winapi) ?HGLOBAL;
 pub extern "user32" fn IsClipboardFormatAvailable(format: UINT) callconv(.winapi) BOOL;
+pub extern "user32" fn RegisterClipboardFormatW(format: LPCWSTR) callconv(.winapi) UINT;
 pub extern "kernel32" fn GlobalAlloc(flags: UINT, bytes: usize) callconv(.winapi) ?HGLOBAL;
 pub extern "kernel32" fn GlobalLock(mem: HGLOBAL) callconv(.winapi) ?*anyopaque;
 pub extern "kernel32" fn GlobalUnlock(mem: HGLOBAL) callconv(.winapi) BOOL;
@@ -631,3 +633,72 @@ pub extern "user32" fn CreatePopupMenu() callconv(.winapi) ?HMENU;
 pub extern "user32" fn DestroyMenu(menu: HMENU) callconv(.winapi) BOOL;
 pub extern "user32" fn AppendMenuW(menu: HMENU, flags: UINT, id: UINT_PTR, item: ?LPCWSTR) callconv(.winapi) BOOL;
 pub extern "user32" fn TrackPopupMenuEx(menu: HMENU, flags: UINT, x: c_int, y: c_int, hwnd: HWND, params: ?*const anyopaque) callconv(.winapi) BOOL;
+
+pub const POINTL = extern struct {
+    x: i32 = 0,
+    y: i32 = 0,
+};
+
+pub const DVASPECT_CONTENT: DWORD = 1;
+pub const TYMED_HGLOBAL: DWORD = 1;
+pub const DROPEFFECT_NONE: DWORD = 0;
+pub const DROPEFFECT_COPY: DWORD = 1;
+
+pub const FORMATETC = extern struct {
+    cfFormat: u16,
+    ptd: ?*anyopaque = null,
+    dwAspect: DWORD = DVASPECT_CONTENT,
+    lindex: i32 = -1,
+    tymed: DWORD = TYMED_HGLOBAL,
+};
+
+pub const STGMEDIUM = extern struct {
+    tymed: DWORD = 0,
+    hGlobal: ?HGLOBAL = null,
+    pUnkForRelease: ?*anyopaque = null,
+};
+
+pub const HDROP = *opaque {};
+
+pub extern "ole32" fn OleInitialize(reserved: ?*anyopaque) callconv(.winapi) HRESULT;
+pub extern "ole32" fn OleUninitialize() callconv(.winapi) void;
+pub extern "ole32" fn RegisterDragDrop(hwnd: HWND, drop_target: *anyopaque) callconv(.winapi) HRESULT;
+pub extern "ole32" fn RevokeDragDrop(hwnd: HWND) callconv(.winapi) HRESULT;
+pub extern "ole32" fn ReleaseStgMedium(medium: *STGMEDIUM) callconv(.winapi) void;
+pub extern "shell32" fn DragQueryFileW(hdrop: HDROP, index: UINT, buf: ?[*]u16, cch: UINT) callconv(.winapi) UINT;
+
+pub const HMODULE = *opaque {};
+pub const FARPROC = *const anyopaque;
+pub const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x00000800;
+
+pub extern "kernel32" fn LoadLibraryExW(name: LPCWSTR, file: ?*anyopaque, flags: DWORD) callconv(.winapi) ?HMODULE;
+pub extern "kernel32" fn FreeLibrary(module: HMODULE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GetProcAddress(module: HMODULE, proc_name: [*:0]const u8) callconv(.winapi) ?FARPROC;
+
+pub const HPOWERNOTIFY = *opaque {};
+pub const WM_POWERBROADCAST: UINT = 0x0218;
+pub const PBT_APMSUSPEND: WPARAM = 0x0004;
+pub const PBT_APMRESUMESUSPEND: WPARAM = 0x0007;
+pub const PBT_APMRESUMEAUTOMATIC: WPARAM = 0x0012;
+pub const PBT_POWERSETTINGCHANGE: WPARAM = 0x8013;
+pub const DEVICE_NOTIFY_WINDOW_HANDLE: DWORD = 0x00000000;
+
+pub const POWERBROADCAST_SETTING = extern struct {
+    PowerSetting: windows.GUID,
+    DataLength: DWORD,
+    Data: [1]u8,
+};
+
+pub const GUID_CONSOLE_DISPLAY_STATE: windows.GUID = .{
+    .Data1 = 0x6FE69556,
+    .Data2 = 0x704A,
+    .Data3 = 0x47A0,
+    .Data4 = .{ 0x8F, 0x24, 0xC2, 0x8D, 0x93, 0x6F, 0xDA, 0x47 },
+};
+
+pub extern "user32" fn RegisterPowerSettingNotification(
+    recipient: HWND,
+    guid: *const windows.GUID,
+    flags: DWORD,
+) callconv(.winapi) ?HPOWERNOTIFY;
+pub extern "user32" fn UnregisterPowerSettingNotification(handle: HPOWERNOTIFY) callconv(.winapi) BOOL;

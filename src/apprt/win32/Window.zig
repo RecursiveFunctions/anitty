@@ -47,6 +47,9 @@ is_quick_terminal: bool = false,
 title_override: ?[:0]const u8 = null,
 bell_ringing: bool = false,
 fullscreen_saved: ?FullscreenSaved = null,
+suspended: bool = false,
+display_off: bool = false,
+power_notify: ?c.HPOWERNOTIFY = null,
 
 pub const Tab = struct {
     tree: SplitView.Tree,
@@ -179,6 +182,11 @@ fn createHostWithStyle(app: *App, win_style: c.DWORD, win_ex_style: c.DWORD, qui
     errdefer _ = c.DestroyWindow(hwnd);
 
     try app.addWindow(self);
+    self.power_notify = c.RegisterPowerSettingNotification(
+        hwnd,
+        &c.GUID_CONSOLE_DISPLAY_STATE,
+        c.DEVICE_NOTIFY_WINDOW_HANDLE,
+    );
     try self.tab_bar.create(hwnd, app.instance);
     try self.tab_overview.create(hwnd, app.instance);
     try self.command_palette.create(hwnd, app.instance);
@@ -1158,7 +1166,23 @@ pub fn applyBackdrop(self: *Window) void {
 pub fn ringBell(self: *Window, surface: ?*Surface) void {
     const hwnd = self.hwnd orelse return;
     const features = self.app.config.@"bell-features";
-    if (features.system or features.audio) _ = c.MessageBeep(c.MB_OK);
+    if (features.system) _ = c.MessageBeep(c.MB_OK);
+    if (features.audio) {
+        if (self.app.config.@"bell-audio-path") |bell_path| {
+            const path, const required = switch (bell_path) {
+                .optional => |p| .{ p, false },
+                .required => |p| .{ p, true },
+            };
+            _ = self.app.bell_audio.ring(
+                self.app.core_app.alloc,
+                path,
+                required,
+                self.app.config.@"bell-audio-volume",
+            );
+        } else if (!features.system) {
+            _ = c.MessageBeep(c.MB_OK);
+        }
+    }
 
     const win_active = c.GetForegroundWindow() == hwnd;
     if (surface) |s| {
@@ -1536,9 +1560,10 @@ fn layoutSplits(self: *Window, content: c.RECT) void {
     }
     pos.end();
 
+    const win_visible = c.IsWindowVisible(hwnd).toBool() and !minimized and !self.isPowerSuspended();
     for (changed.items) |surface| {
         const shown = if (surface.hwnd) |h| isShown(h) else false;
-        surface.setVisible(shown and !minimized);
+        surface.setVisible(shown and win_visible);
     }
     _ = c.InvalidateRect(hwnd, &content, .FALSE);
 }
@@ -1595,12 +1620,17 @@ fn isShown(hwnd: c.HWND) bool {
     return bits & c.WS_VISIBLE != 0;
 }
 
+fn isPowerSuspended(self: *const Window) bool {
+    return self.suspended or self.display_off;
+}
+
 fn setTabVisible(self: *Window, visible: bool) void {
     if (self.active >= self.tabs.items.len) return;
+    const eff = visible and !self.isPowerSuspended();
     var it = self.tabs.items[self.active].tree.iterator();
     while (it.next()) |entry| {
         const child = entry.view.hwnd orelse continue;
-        if (isShown(child)) entry.view.setVisible(visible);
+        if (isShown(child)) entry.view.setVisible(eff);
     }
 }
 
@@ -1838,7 +1868,45 @@ pub fn wndProc(
             }
         },
 
+        c.WM_POWERBROADCAST => {
+            switch (wparam) {
+                c.PBT_APMSUSPEND => {
+                    self.suspended = true;
+                    self.setTabVisible(false);
+                },
+                c.PBT_APMRESUMEAUTOMATIC, c.PBT_APMRESUMESUSPEND => {
+                    self.suspended = false;
+                    const visible = c.IsWindowVisible(hwnd).toBool() and !c.IsIconic(hwnd).toBool();
+                    self.setTabVisible(visible);
+                    if (visible and !self.isPowerSuspended()) {
+                        self.layout();
+                    }
+                },
+                c.PBT_POWERSETTINGCHANGE => if (lparam != 0) {
+                    const setting: *const c.POWERBROADCAST_SETTING = @ptrFromInt(@as(usize, @bitCast(lparam)));
+                    if (std.mem.eql(
+                        u8,
+                        std.mem.asBytes(&setting.PowerSetting),
+                        std.mem.asBytes(&c.GUID_CONSOLE_DISPLAY_STATE),
+                    ) and setting.DataLength >= 1) {
+                        self.display_off = setting.Data[0] == 0;
+                        const visible = c.IsWindowVisible(hwnd).toBool() and !c.IsIconic(hwnd).toBool();
+                        self.setTabVisible(visible);
+                        if (visible and !self.isPowerSuspended()) {
+                            self.layout();
+                        }
+                    }
+                },
+                else => {},
+            }
+            return 1;
+        },
+
         c.WM_DESTROY => {
+            if (self.power_notify) |pn| {
+                self.power_notify = null;
+                _ = c.UnregisterPowerSettingNotification(pn);
+            }
             self.destroyTabs();
             return 0;
         },

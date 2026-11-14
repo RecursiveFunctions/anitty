@@ -25,6 +25,7 @@ const taskbarpkg = @import("taskbar.zig");
 const dialogs = @import("dialogs.zig");
 const ipcpkg = @import("ipc.zig");
 const UntrustedUrl = @import("UntrustedUrl.zig");
+const BellAudio = @import("BellAudio.zig");
 const internal_os = @import("../../os/main.zig");
 const i18n = internal_os.i18n;
 
@@ -83,6 +84,7 @@ quick_terminal: QuickTerminal = .{},
 undo_history: UndoHistory = .{},
 selection_clipboard: ?[:0]u8 = null,
 secure_input: bool = false,
+bell_audio: BellAudio = .{},
 
 pub fn init(
     self: *App,
@@ -111,11 +113,8 @@ pub fn init(
         .instance = instance,
     };
 
-    self.com_initialized = c.CoInitializeEx(
-        null,
-        c.COINIT_APARTMENTTHREADED | c.COINIT_DISABLE_OLE1DDE,
-    ) >= 0;
-    errdefer if (self.com_initialized) c.CoUninitialize();
+    self.com_initialized = c.OleInitialize(null) >= 0;
+    errdefer if (self.com_initialized) c.OleUninitialize();
     _ = c.SetCurrentProcessExplicitAppUserModelID(L("com.mitchellh.ghostty"));
     updater.cleanupOldExecutable();
 
@@ -335,8 +334,9 @@ pub fn terminate(self: *App) void {
     }
     self.msg_hwnd = null;
     unregisterClasses(self.instance);
+    self.bell_audio.deinit(self.core_app.alloc);
     self.config.deinit();
-    if (self.com_initialized) c.CoUninitialize();
+    if (self.com_initialized) c.OleUninitialize();
 }
 
 pub fn wakeup(self: *App) void {

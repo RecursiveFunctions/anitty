@@ -5,7 +5,10 @@ pub const Surface = @import("win32/Surface.zig");
 pub const resourcesDir = internal_os.resourcesDir;
 
 pub const c = @import("win32/c.zig");
+pub const cf_html = @import("win32/cf_html.zig");
 pub const clipboard = @import("win32/clipboard.zig");
+pub const DropTarget = @import("win32/DropTarget.zig");
+pub const BellAudio = @import("win32/BellAudio.zig");
 pub const ime = @import("win32/ime.zig");
 pub const ipc = @import("win32/ipc.zig");
 pub const jumplist = @import("win32/jumplist.zig");

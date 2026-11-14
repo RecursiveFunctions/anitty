@@ -60,4 +60,7 @@ test {
     _ = action;
     _ = structs;
     _ = win32.updater;
+    _ = win32.cf_html;
+    _ = win32.DropTarget;
+    _ = win32.BellAudio;
 }

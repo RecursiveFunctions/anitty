@@ -17,6 +17,7 @@ const ime = @import("ime.zig");
 const SearchOverlay = @import("SearchOverlay.zig");
 const SurfaceOverlay = @import("SurfaceOverlay.zig");
 const InspectorWindow = @import("InspectorWindow.zig");
+const DropTarget = @import("DropTarget.zig");
 const i18n = @import("../../os/main.zig").i18n;
 
 const log = std.log.scoped(.win32);
@@ -55,6 +56,8 @@ mouse_shape: terminal.MouseShape = .text,
 mouse_hidden: bool = false,
 mouse_tracking: bool = false,
 mouse_buttons: u16 = 0,
+drop_target: ?*DropTarget = null,
+is_cmd_shell: bool = false,
 
 const WM_GHOSTTY_FOCUS = c.WM_APP + 0x50;
 
@@ -132,9 +135,11 @@ pub fn createWithWorkingDirectory(
         }
     }
     try app.ipc.applyOverrides(&config);
+    self.is_cmd_shell = isCmdCommand(config.command);
 
     try self.core_surface.init(alloc, &config, app.core_app, app, self);
     self.initialized = true;
+    self.drop_target = DropTarget.register(alloc, self);
     log.debug("core surface initialized", .{});
 
     self.updateSize();
@@ -160,6 +165,10 @@ pub fn destroy(self: *Surface) void {
     log.debug("surface destroy", .{});
 
     if (self.inspector_window) |insp| insp.destroy();
+    if (self.drop_target) |dt| {
+        self.drop_target = null;
+        dt.revoke(self.hwnd);
+    }
     self.deinit();
 
     if (self.hwnd) |hwnd| {
@@ -761,13 +770,15 @@ pub fn setClipboard(
     confirm: bool,
 ) !void {
     if (!self.supportsClipboard(clipboard_type)) return;
-    const text = textContent(contents) orelse return;
-    if (confirm and !self.confirmClipboard(.write, text)) return;
+    const text = textContent(contents);
+    const html = htmlContent(contents);
+    const preview = text orelse html orelse return;
+    if (confirm and !self.confirmClipboard(.write, preview)) return;
     const alloc = self.app.core_app.alloc;
     switch (clipboard_type) {
-        .standard => try clipboard.writeText(alloc, self.hwnd, text),
-        .selection => {
-            const copy = try alloc.dupeSentinel(u8, text, 0);
+        .standard => try clipboard.writeTextAndHtml(alloc, self.hwnd, text, html),
+        .selection => if (text) |plain| {
+            const copy = try alloc.dupeSentinel(u8, plain, 0);
             if (self.app.selection_clipboard) |old| alloc.free(old);
             self.app.selection_clipboard = copy;
         },
@@ -780,6 +791,47 @@ fn textContent(contents: []const apprt.ClipboardContent) ?[:0]const u8 {
         if (terminal.clipboard.isTextMime(content.mime)) return content.data;
     }
     return null;
+}
+
+fn htmlContent(contents: []const apprt.ClipboardContent) ?[:0]const u8 {
+    for (contents) |content| {
+        if (std.ascii.startsWithIgnoreCase(content.mime, "text/html")) return content.data;
+    }
+    return null;
+}
+
+pub fn pasteDroppedText(self: *Surface, text: []const u8) void {
+    if (!self.initialized or text.len == 0) return;
+    const contents = [_]terminal.clipboard.Content{.{ .mime = "text/plain", .data = text }};
+    self.completeClipboard(.{ .paste = .standard }, .{
+        .contents = &contents,
+        .available = &.{"text/plain"},
+    }, text);
+}
+
+pub fn shellIsCmd(self: *const Surface) bool {
+    return self.is_cmd_shell;
+}
+
+fn isCmdCommand(cmd_opt: ?configpkg.Command) bool {
+    const cmd = cmd_opt orelse return false;
+    const exe: []const u8 = switch (cmd) {
+        .direct => |args| if (args.len > 0) std.mem.trim(u8, args[0], " \t\"") else return false,
+        .shell => |s| blk: {
+            const trimmed = std.mem.trimStart(u8, s, " \t");
+            if (trimmed.len == 0) return false;
+            if (trimmed[0] == '"') {
+                const rest = trimmed[1..];
+                const end = std.mem.indexOfScalar(u8, rest, '"') orelse rest.len;
+                break :blk rest[0..end];
+            }
+            const end = std.mem.indexOfAny(u8, trimmed, " \t") orelse trimmed.len;
+            break :blk trimmed[0..end];
+        },
+    };
+    const base_start = if (std.mem.lastIndexOfAny(u8, exe, "\\/")) |idx| idx + 1 else 0;
+    const base = exe[base_start..];
+    return std.ascii.eqlIgnoreCase(base, "cmd") or std.ascii.eqlIgnoreCase(base, "cmd.exe");
 }
 
 fn completeClipboard(

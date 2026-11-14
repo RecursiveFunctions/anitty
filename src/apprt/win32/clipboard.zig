@@ -2,7 +2,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const c = @import("c.zig");
+const cf_html = @import("cf_html.zig");
 
+const L = std.unicode.utf8ToUtf16LeStringLiteral;
 const replacement = std.unicode.replacement_character;
 
 pub fn hasText() bool {
@@ -26,28 +28,68 @@ pub fn readText(alloc: Allocator, hwnd: ?c.HWND) !?[]u8 {
 }
 
 pub fn writeText(alloc: Allocator, hwnd: ?c.HWND, text: []const u8) !void {
-    const wide = try utf16FromUtf8(alloc, text);
-    defer alloc.free(wide);
-    try writeUtf16(hwnd, wide);
+    try writeTextAndHtml(alloc, hwnd, text, null);
 }
 
-fn writeUtf16(hwnd: ?c.HWND, wide: [:0]const u16) !void {
-    const units = wide.len + 1;
-    const mem = c.GlobalAlloc(c.GMEM_MOVEABLE, units * 2) orelse return error.OutOfMemory;
-    var owned = false;
-    defer if (!owned) {
-        _ = c.GlobalFree(mem);
+pub fn writeTextAndHtml(
+    alloc: Allocator,
+    hwnd: ?c.HWND,
+    text: ?[]const u8,
+    html: ?[]const u8,
+) !void {
+    if (text == null and html == null) return;
+
+    var text_mem: ?c.HGLOBAL = null;
+    var text_owned = false;
+    defer if (!text_owned) if (text_mem) |m| {
+        _ = c.GlobalFree(m);
     };
 
-    const dst: [*]u16 = @ptrCast(@alignCast(c.GlobalLock(mem) orelse return error.OutOfMemory));
-    @memcpy(dst[0..units], wide.ptr[0..units]);
-    _ = c.GlobalUnlock(mem);
+    if (text) |plain| {
+        const wide = try utf16FromUtf8(alloc, plain);
+        defer alloc.free(wide);
+        const units = wide.len + 1;
+        const mem = c.GlobalAlloc(c.GMEM_MOVEABLE, units * 2) orelse return error.OutOfMemory;
+        text_mem = mem;
+        const dst: [*]u16 = @ptrCast(@alignCast(c.GlobalLock(mem) orelse return error.OutOfMemory));
+        @memcpy(dst[0..units], wide.ptr[0..units]);
+        _ = c.GlobalUnlock(mem);
+    }
+
+    var html_mem: ?c.HGLOBAL = null;
+    var html_owned = false;
+    var html_fmt: c.UINT = 0;
+    defer if (!html_owned) if (html_mem) |m| {
+        _ = c.GlobalFree(m);
+    };
+
+    if (html) |fragment| {
+        html_fmt = c.RegisterClipboardFormatW(L("HTML Format"));
+        if (html_fmt != 0) {
+            const payload = try cf_html.encode(alloc, fragment);
+            defer alloc.free(payload);
+            const bytes = payload.len + 1;
+            const mem = c.GlobalAlloc(c.GMEM_MOVEABLE, bytes) orelse return error.OutOfMemory;
+            html_mem = mem;
+            const dst: [*]u8 = @ptrCast(c.GlobalLock(mem) orelse return error.OutOfMemory);
+            @memcpy(dst[0..bytes], payload.ptr[0..bytes]);
+            _ = c.GlobalUnlock(mem);
+        }
+    }
 
     try open(hwnd);
     defer _ = c.CloseClipboard();
     if (!c.EmptyClipboard().toBool()) return error.ClipboardWriteFailed;
-    if (c.SetClipboardData(c.CF_UNICODETEXT, mem) == null) return error.ClipboardWriteFailed;
-    owned = true;
+
+    if (text_mem) |mem| {
+        if (c.SetClipboardData(c.CF_UNICODETEXT, mem) == null) return error.ClipboardWriteFailed;
+        text_owned = true;
+    }
+    if (html_mem) |mem| {
+        if (c.SetClipboardData(html_fmt, mem) != null) {
+            html_owned = true;
+        }
+    }
 }
 
 fn open(hwnd: ?c.HWND) error{ClipboardBusy}!void {
@@ -123,7 +165,6 @@ pub fn pasteTextFromUtf16(alloc: Allocator, units: []const u16) ![]u8 {
 test "utf8 to utf16" {
     const testing = std.testing;
     const alloc = testing.allocator;
-    const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
     const wide = try utf16FromUtf8(alloc, "héllo\nwörld 日本 🎉");
     defer alloc.free(wide);
@@ -137,7 +178,6 @@ test "utf8 to utf16" {
 test "utf16 to paste text" {
     const testing = std.testing;
     const alloc = testing.allocator;
-    const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
     const text = try pasteTextFromUtf16(alloc, L("héllo\r\nwörld\r日本\n🎉\r\n"));
     defer alloc.free(text);
@@ -157,7 +197,6 @@ test "clipboard round trip" {
     ) == 0) return error.SkipZigTest;
     const testing = std.testing;
     const alloc = testing.allocator;
-    const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
     const hwnd = c.CreateWindowExW(
         0,

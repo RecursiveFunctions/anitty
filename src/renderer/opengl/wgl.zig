@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const windows = std.os.windows;
+pub const d3d11_presenter = @import("d3d11_presenter.zig");
 
 const log = std.log.scoped(.wgl);
 
@@ -267,7 +268,7 @@ fn loadExtensions() !Extensions {
     };
 }
 
-pub const Present = enum { swap_interval, dwm_flush };
+pub const Present = enum { swap_interval, dwm_flush, dxgi_flip, dxgi_warp };
 
 fn qpc() i64 {
     var v: i64 = 0;
@@ -319,7 +320,9 @@ pub const Context = struct {
     hwnd: HWND,
     hdc: HDC,
     hglrc: HGLRC,
+    vsync: bool,
     present_mode: Present,
+    d3d11: ?d3d11_presenter.Presenter = null,
     present_event: windows.HANDLE,
     presented_size: std.atomic.Value(u64) = .init(0),
     stats: FrameStats,
@@ -383,17 +386,37 @@ pub const Context = struct {
 
         const event = CreateEventW(null, .FALSE, .FALSE, null) orelse return error.WglCreateEventFailed;
 
+        const d3d_mode = d3d11_presenter.requestedMode();
+        const d3d11_opt: ?d3d11_presenter.Presenter = switch (d3d_mode) {
+            .disabled => null,
+            .hardware => d3d11_presenter.Presenter.init(hwnd, false) catch |err| d3d_err: {
+                log.warn("D3D11 hardware presenter init failed err={}, falling back to WGL", .{err});
+                break :d3d_err null;
+            },
+            .warp => d3d11_presenter.Presenter.init(hwnd, true) catch |err| d3d_err: {
+                log.warn("D3D11 WARP presenter init failed err={}, falling back to WGL", .{err});
+                break :d3d_err null;
+            },
+        };
+        const final_mode: Present = if (d3d11_opt) |p|
+            (if (p.is_warp) .dxgi_warp else .dxgi_flip)
+        else
+            mode;
+
         return .{
             .hwnd = hwnd,
             .hdc = hdc,
             .hglrc = hglrc,
-            .present_mode = mode,
+            .vsync = vsync,
+            .present_mode = final_mode,
+            .d3d11 = d3d11_opt,
             .present_event = event,
             .stats = .init(),
         };
     }
 
     pub fn deinit(self: *Context) void {
+        if (self.d3d11) |*p| p.deinit();
         if (wglGetCurrentContext() == self.hglrc) _ = wglMakeCurrent(null, null);
         _ = CloseHandle(self.present_event);
         _ = wglDeleteContext(self.hglrc);
@@ -410,8 +433,21 @@ pub const Context = struct {
     }
 
     pub fn swapBuffers(self: *Context, width: u32, height: u32) !void {
-        if (!SwapBuffers(self.hdc).toBool()) return error.WglSwapBuffersFailed;
-        if (self.present_mode == .dwm_flush) _ = DwmFlush();
+        if (self.d3d11) |*presenter| {
+            const ReadPixelsFn = *const fn (c_int, c_int, c_int, c_int, c_uint, c_uint, ?*anyopaque) callconv(.winapi) void;
+            if (getProcAddress("glReadPixels")) |proc| {
+                const readPixels: ReadPixelsFn = @ptrCast(proc);
+                presenter.presentFromGL(width, height, self.vsync, readPixels) catch |err| {
+                    log.warn("D3D11 present failed err={}, falling back to WGL SwapBuffers", .{err});
+                    if (!SwapBuffers(self.hdc).toBool()) return error.WglSwapBuffersFailed;
+                };
+            } else {
+                if (!SwapBuffers(self.hdc).toBool()) return error.WglSwapBuffersFailed;
+            }
+        } else {
+            if (!SwapBuffers(self.hdc).toBool()) return error.WglSwapBuffersFailed;
+            if (self.present_mode == .dwm_flush) _ = DwmFlush();
+        }
         self.presented_size.store(packSize(width, height), .release);
         _ = SetEvent(self.present_event);
         self.stats.record(self.present_mode);

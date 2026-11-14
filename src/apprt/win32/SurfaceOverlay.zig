@@ -49,6 +49,7 @@ banner_hover_close: bool = false,
 banner_tracking: bool = false,
 
 readonly: bool = false,
+secure_input: bool = false,
 renderer_health: renderer.Health = .healthy,
 key_sequence: std.ArrayList([:0]const u8) = .empty,
 key_tables: std.ArrayList([:0]const u8) = .empty,
@@ -201,6 +202,12 @@ pub fn setReadonly(self: *SurfaceOverlay, v: bool) void {
     self.refreshPill();
 }
 
+pub fn setSecureInput(self: *SurfaceOverlay, v: bool) void {
+    if (self.secure_input == v) return;
+    self.secure_input = v;
+    self.refreshPill();
+}
+
 pub fn setRendererHealth(self: *SurfaceOverlay, health: renderer.Health) void {
     if (self.renderer_health == health) return;
     self.renderer_health = health;
@@ -266,9 +273,10 @@ pub fn setScrollbar(self: *SurfaceOverlay, sb: terminal.Scrollbar) void {
 
 pub fn refreshPill(self: *SurfaceOverlay) void {
     const s = self.surface();
-    const text = formatPillText(
+    const text = formatPillTextWithSecure(
         &self.pill_text,
         self.readonly,
+        self.secure_input,
         self.renderer_health,
         self.key_tables.items,
         self.key_sequence.items,
@@ -293,6 +301,18 @@ pub fn formatPillText(
     seq: []const [:0]const u8,
     hover_url: ?[:0]const u8,
 ) []const u8 {
+    return formatPillTextWithSecure(buf, readonly, false, health, tables, seq, hover_url);
+}
+
+pub fn formatPillTextWithSecure(
+    buf: []u8,
+    readonly: bool,
+    secure_input: bool,
+    health: renderer.Health,
+    tables: []const [:0]const u8,
+    seq: []const [:0]const u8,
+    hover_url: ?[:0]const u8,
+) []const u8 {
     var pos: usize = 0;
     const appendPart = struct {
         fn call(b: []u8, p: *usize, part: []const u8) void {
@@ -307,6 +327,7 @@ pub fn formatPillText(
         }
     }.call;
 
+    if (secure_input) appendPart(buf, &pos, "Secure Input");
     if (readonly) appendPart(buf, &pos, "Read-Only");
     if (health != .healthy) appendPart(buf, &pos, "Shader Error");
     if (tables.len > 0) {
@@ -1076,6 +1097,9 @@ test "SurfaceOverlay formatPillText" {
     const tables = [_][:0]const u8{"resize"};
     const s = formatPillText(&buf, true, .healthy, &tables, &.{}, "https://ghostty.org");
     try testing.expectEqualStrings("Read-Only | Key Table: resize | https://ghostty.org", s);
+
+    const sec = formatPillTextWithSecure(&buf, true, true, .healthy, &tables, &.{}, null);
+    try testing.expectEqualStrings("Secure Input | Read-Only | Key Table: resize", sec);
 }
 
 test "SurfaceOverlay computeResizeOverlayRect" {

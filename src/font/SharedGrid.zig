@@ -626,15 +626,18 @@ test getIndex {
 }
 
 test "getIndex: face that fails to load is treated as no font" {
-    // Fontconfig can hand back a match whose charset claims a codepoint but
-    // which has no file to load. Choosing that face for the codepoint must
-    // not turn into an error: the renderer would drop the whole row and
-    // retry the load on every frame.
-    if (comptime font.options.backend != .fontconfig_freetype) return error.SkipZigTest;
+    // Fontconfig (or a stale/unreadable path in the Windows font index) can
+    // hand back a match whose CMap/charset claims a codepoint but whose file
+    // cannot be loaded. Choosing that face for the codepoint must not turn
+    // into an error: the renderer would drop the whole row and retry the
+    // load on every frame.
+    switch (comptime font.options.backend) {
+        .fontconfig_freetype, .freetype_windows => {},
+        else => return error.SkipZigTest,
+    }
 
     const testing = std.testing;
     const alloc = testing.allocator;
-    const fontconfig = @import("fontconfig");
 
     var lib = try Library.init(alloc);
     defer lib.deinit();
@@ -642,24 +645,57 @@ test "getIndex: face that fails to load is treated as no font" {
     var grid = try testGrid(.normal, alloc, lib);
     defer grid.deinit(alloc);
 
-    // U+1F17C NEGATIVE SQUARED LATIN CAPITAL LETTER M, which the primary
-    // font does not have.
-    const cp = 0x1F17C;
+    // U+1F17C NEGATIVE SQUARED LATIN CAPITAL LETTER M (or 'A' on Windows
+    // where the peek face uses the embedded font's CMap).
+    const cp: u32 = switch (comptime font.options.backend) {
+        .fontconfig_freetype => 0x1F17C,
+        .freetype_windows => font_cp: {
+            // Remove the primary face so fallback is consulted for 'A'.
+            var list = &grid.resolver.collection.faces.getPtr(.regular).entries;
+            var entry = list.pop().?;
+            entry.deinit(alloc);
+            break :font_cp 'A';
+        },
+        else => unreachable,
+    };
 
-    const pat = fontconfig.Pattern.create();
-    {
-        const cs = fontconfig.CharSet.create();
-        defer cs.destroy();
-        try testing.expect(cs.addChar(cp));
-        try testing.expect(pat.add(.charset, .{ .char_set = cs }, false));
-    }
-    try testing.expect(pat.add(.lang, .{ .string = "en" }, false));
-    var deferred: DeferredFace = .{ .fc = .{
-        .pattern = pat,
-        .charset = (try pat.get(.charset, 0)).char_set,
-        .langset = try pat.get(.lang, 0),
-        .variations = &.{},
-    } };
+    var deferred: DeferredFace = switch (comptime font.options.backend) {
+        .fontconfig_freetype => fc: {
+            const fontconfig = @import("fontconfig");
+            const pat = fontconfig.Pattern.create();
+            {
+                const cs = fontconfig.CharSet.create();
+                defer cs.destroy();
+                try testing.expect(cs.addChar(cp));
+                try testing.expect(pat.add(.charset, .{ .char_set = cs }, false));
+            }
+            try testing.expect(pat.add(.lang, .{ .string = "en" }, false));
+            break :fc .{ .fc = .{
+                .pattern = pat,
+                .charset = (try pat.get(.charset, 0)).char_set,
+                .langset = try pat.get(.lang, 0),
+                .variations = &.{},
+            } };
+        },
+        .freetype_windows => win: {
+            lib.mutex.lockUncancelable(global.io());
+            defer lib.mutex.unlock(global.io());
+            const peek = try lib.lib.initMemoryFace(font.embedded.regular, 0);
+            errdefer peek.deinit();
+            try peek.selectCharmap(.unicode);
+            break :win .{ .win = .{
+                .lib = lib,
+                .path = "Z:\\__nonexistent_ghostty_test_font__.ttf",
+                .face_index = 0,
+                .family = "Nonexistent",
+                .name = "Nonexistent Regular",
+                .variations = &.{},
+                .peek = peek,
+                .presentation = .text,
+            } };
+        },
+        else => unreachable,
+    };
     _ = grid.resolver.collection.addDeferred(alloc, deferred, .{
         .style = .regular,
         .fallback = true,

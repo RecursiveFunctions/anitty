@@ -22,6 +22,7 @@ pub const UndoHistory = @import("win32/UndoHistory.zig");
 pub const UntrustedUrl = @import("win32/UntrustedUrl.zig");
 pub const updater = @import("win32/updater.zig");
 pub const toast = @import("win32/toast.zig");
+pub const SessionState = @import("win32/SessionState.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

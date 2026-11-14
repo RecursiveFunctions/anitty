@@ -93,7 +93,7 @@ ghostty\
 
 | Category                     | Supported on Windows (`win32`)                                                                                                                                                                                                                                                                                                                     |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Windowing & Tabs**         | Multi-window, single-instance IPC (`+new-window`, `+new-tab`), custom tab bar, tab overview (`toggle_tab_overview`), live-session `undo`/`redo` (`undo-timeout`), borderless/decorations toggle, fullscreen & maximize, cell-step resize (`window-step-resize`)                                                                                    |
+| **Windowing & Tabs**         | Multi-window, single-instance IPC (`+new-window`, `+new-tab`), session save/restore (`window-save-state`), custom tab bar, tab overview (`toggle_tab_overview`), live-session `undo`/`redo` (`undo-timeout`), borderless/decorations toggle, fullscreen & maximize, cell-step resize (`window-step-resize`)                                           |
 | **Splits**                   | Horizontal/vertical splits, directional focus navigation, mouse divider dragging, split zoom (`toggle_split_zoom`), equalizing splits, unfocused split dimming (`unfocused-split-opacity`, `unfocused-split-fill`)                                                                                                                                 |
 | **Overlays & Inspector**     | Live scrollback search bar (`start_search`), localized fuzzy Command Palette (`toggle_command_palette`), SHA-256 verified in-app auto-updater (`check_for_updates`), live resize dimensions overlay (`resize-overlay`), hyperlink/status pill, surface right-click context menu, and multi-dock Dear ImGui Terminal Inspector (`inspector:toggle`) |
 | **Quick Terminal & Hotkeys** | Global dropdown Quick Terminal (`toggle_quick_terminal`) with slide/fade animations, position/size config, auto-hide, and system-wide `global:` keybindings via `RegisterHotKey`                                                                                                                                                                   |
@@ -109,13 +109,14 @@ ghostty\
 
 ### Phase 2 — DirectX / WARP Fallback & WinGet (Next)
 
-- [ ] **DirectX 11 / D3D12 + Microsoft WARP Software Fallback Renderer:** Enable Ghostty to run in GPU-less virtual machines (Hyper-V, VMware, QEMU), Windows Sandbox, and Remote Desktop (RDP) sessions where the Microsoft Basic Render Driver lacks OpenGL 4.3, while unlocking native DirectComposition transparency and HDR.
+- [x] **DirectX 11 / DXGI Flip-Model + Microsoft WARP Software Fallback Presenter (`src/renderer/opengl/d3d11_presenter.zig`):** Zero-dependency D3D11 + `IDXGISwapChain1` presenter supporting `WGL_NV_DX_interop2` zero-copy sharing and automatic fallback to `D3D_DRIVER_TYPE_WARP` (`GHOSTTY_WIN32_PRESENTER=d3d11|warp`).
 - [ ] **Automated WinGet Package Publishing:** Publish to `microsoft/winget-pkgs` from the release workflow so users can install and update via `winget install`.
 
 ### Phase 3 — Deep Windows Shell & Accessibility Integration (Planned)
 
 - [x] **Taskbar Jump Lists & Shell Auto-Discovery (`ICustomDestinationList`):** Right-click Taskbar Jump List tasks (_New Window_, _New Tab_) and auto-discovered profiles for PowerShell 7, Windows PowerShell 5.1, `cmd.exe`, installed WSL distributions (`HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss`), and Git Bash.
-- [ ] **Session Restore (`window-save-state`):** Save and restore window positions, tabs, split layouts, and working directories across restarts and in-app updates.
+- [x] **Session Restore (`window-save-state`):** Save and restore window positions, tabs, split layouts, and working directories across restarts, OS logoff (`WM_ENDSESSION`), and in-app updates.
+- [x] **Secure Input Screen-Capture Protection (`toggle_secure_input`):** Excludes terminal windows from screen capture/recording via `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` with a live lock cursor and `Secure Input` status pill.
 - [ ] **Windows UI Automation (`UIAutomationCore.dll`):** Implement `IRawElementProviderSimple` and `ITextProvider` for Windows Narrator and NVDA screen-reader accessibility.
 
 ## Configuration
@@ -154,7 +155,8 @@ command = C:/msys64/usr/bin/fish.exe -l
 | Keys                            | Action                     |
 | ------------------------------- | -------------------------- |
 | `ctrl+shift+c` / `ctrl+ins`     | Copy                       |
-| `ctrl+shift+v` / `shift+ins`    | Paste                      |
+| `ctrl+shift+v`                  | Paste                      |
+| `shift+ins` / middle-click      | Paste selection            |
 | `ctrl+shift+t`                  | New tab                    |
 | `ctrl+shift+n`                  | New window                 |
 | `ctrl+shift+w`                  | Close surface / tab        |

@@ -63,9 +63,7 @@ fn scale(v: i32, dpi: c.UINT) i32 {
 
 pub fn isActionSupported(action: input.Binding.Action) bool {
     return switch (action) {
-        .toggle_secure_input,
-        .show_gtk_inspector,
-        => false,
+        .show_gtk_inspector => false,
         else => true,
     };
 }

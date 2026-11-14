@@ -11,6 +11,7 @@ const SplitView = @import("SplitView.zig");
 const CommandPalette = @import("CommandPalette.zig");
 const TabOverview = @import("TabOverview.zig");
 const UndoHistory = @import("UndoHistory.zig");
+const SessionState = @import("SessionState.zig");
 const c = @import("c.zig");
 const dialogs = @import("dialogs.zig");
 
@@ -203,6 +204,112 @@ fn destroyTab(self: *Window, tab: Tab) void {
     tree.deinit();
 }
 
+pub fn restoreFromSession(app: *App, sw: SessionState.SavedWindow) !*Window {
+    const alloc = app.core_app.alloc;
+    const prev = app.activeWindow();
+    const self = try createHost(app);
+    const hwnd = self.hwnd.?;
+    errdefer self.destroy();
+
+    self.decorations_override = sw.decorations_override;
+    self.opaque_override = sw.opaque_override;
+    if (!self.decorationsEnabled()) self.applyDecorations();
+    if (sw.title_override) |t| {
+        if (t.len > 0) self.title_override = try alloc.dupeSentinel(u8, t, 0);
+    }
+
+    const content_rect = self.contentRect(sw.tabs.len);
+    for (sw.tabs) |st| {
+        if (st.nodes.len == 0) continue;
+        var arena: std.heap.ArenaAllocator = .init(alloc);
+        errdefer arena.deinit();
+        const tree_alloc = arena.allocator();
+        const nodes = try tree_alloc.alloc(SplitView.Tree.Node, st.nodes.len);
+        var created: std.ArrayList(*Surface) = .empty;
+        defer {
+            for (created.items) |s| s.unref();
+            created.deinit(alloc);
+        }
+
+        var focused: ?*Surface = null;
+        for (st.nodes, 0..) |sn, idx| {
+            switch (sn.kind) {
+                .leaf => {
+                    const s = try Surface.createWithWorkingDirectory(
+                        self,
+                        content_rect,
+                        .window,
+                        null,
+                        sn.pwd,
+                    );
+                    try created.append(alloc, s);
+                    if (sn.title_override) |to| {
+                        if (to.len > 0) {
+                            const to_z = try alloc.dupeSentinel(u8, to, 0);
+                            defer alloc.free(to_z);
+                            try s.setTitleOverride(to_z);
+                        }
+                    }
+                    nodes[idx] = .{ .leaf = s.ref() };
+                    if (focused == null or idx == st.focused_leaf) focused = s;
+                },
+                .split => {
+                    const left_idx = @min(@as(usize, st.nodes.len - 1), sn.left);
+                    const right_idx = @min(@as(usize, st.nodes.len - 1), sn.right);
+                    nodes[idx] = .{ .split = .{
+                        .layout = sn.layout,
+                        .ratio = @floatCast(std.math.clamp(sn.ratio, 0.05, 0.95)),
+                        .left = @fromBackingInt(@intCast(left_idx)),
+                        .right = @fromBackingInt(@intCast(right_idx)),
+                    } };
+                },
+            }
+        }
+        const focus_surface = focused orelse continue;
+        const zoomed: ?SplitView.Handle = if (st.zoomed_node) |zn|
+            if (zn < nodes.len) @fromBackingInt(zn) else null
+        else
+            null;
+        const tree: SplitView.Tree = .{
+            .arena = arena,
+            .nodes = nodes,
+            .zoomed = zoomed,
+        };
+        const tab_title: ?[:0]const u8 = if (st.title_override) |to|
+            if (to.len > 0) try alloc.dupeSentinel(u8, to, 0) else null
+        else
+            null;
+        try self.tabs.append(alloc, .{
+            .tree = tree,
+            .focused = focus_surface,
+            .title_override = tab_title,
+        });
+    }
+    if (self.tabs.items.len == 0) return error.NoTabsRestored;
+
+    if (sw.width > 0 and sw.height > 0 and sw.x != c.CW_USEDEFAULT and sw.y != c.CW_USEDEFAULT) {
+        _ = c.SetWindowPos(
+            hwnd,
+            null,
+            sw.x,
+            sw.y,
+            sw.width,
+            sw.height,
+            c.SWP_NOZORDER | c.SWP_NOACTIVATE,
+        );
+    } else {
+        self.place(prev);
+    }
+
+    self.active = @min(sw.active_tab, self.tabs.items.len - 1);
+    self.applyChrome(app.chrome);
+    _ = c.ShowWindow(hwnd, if (sw.maximized or app.config.maximize) c.SW_MAXIMIZE else c.SW_SHOWNORMAL);
+    if (sw.fullscreen or app.config.fullscreen != .false) self.toggleFullscreen();
+    _ = c.UpdateWindow(hwnd);
+    self.activate(self.active, null);
+    return self;
+}
+
 pub fn restoreFromUndo(app: *App, cw: *UndoHistory.CloseWindowOp) !*Window {
     const alloc = app.core_app.alloc;
     const prev = app.activeWindow();
@@ -327,6 +434,7 @@ pub fn relayout(self: *Window) void {
     self.layout();
     self.focusActive();
     self.updateDwmColors(self.app.chrome);
+    self.syncDisplayAffinity();
     self.tab_bar.invalidate();
     self.refreshTitle();
 }
@@ -339,6 +447,7 @@ fn activate(self: *Window, index: usize, prev: ?*Surface) void {
     self.layout();
     if (focus) self.focusActive();
     self.updateDwmColors(self.app.chrome);
+    self.syncDisplayAffinity();
     self.tab_bar.invalidate();
     self.refreshTitle();
 }
@@ -934,6 +1043,26 @@ pub fn surfaceBellChanged(self: *Window, surface: *Surface) void {
     self.tab_bar.invalidate();
     self.refreshTitle();
     if (self.hwnd) |hwnd| _ = c.InvalidateRect(hwnd, null, .FALSE);
+}
+
+pub fn anySecureInput(self: *const Window) bool {
+    if (self.app.secure_input) return true;
+    if (self.active >= self.tabs.items.len) return false;
+    var it = self.tabs.items[self.active].tree.iterator();
+    while (it.next()) |entry| {
+        if (entry.view.secure_input) return true;
+    }
+    return false;
+}
+
+pub fn syncDisplayAffinity(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    const desired: c.DWORD = if (self.anySecureInput()) c.WDA_EXCLUDEFROMCAPTURE else c.WDA_NONE;
+    var current: c.DWORD = c.WDA_NONE;
+    if (c.GetWindowDisplayAffinity(hwnd, &current).toBool() and current == desired) return;
+    if (!c.SetWindowDisplayAffinity(hwnd, desired).toBool() and desired == c.WDA_EXCLUDEFROMCAPTURE) {
+        _ = c.SetWindowDisplayAffinity(hwnd, c.WDA_MONITOR);
+    }
 }
 
 fn refreshTitle(self: *Window) void {
@@ -1656,6 +1785,13 @@ pub fn wndProc(
 
         c.WM_CLOSE => {
             self.handleClose();
+            return 0;
+        },
+
+        c.WM_QUERYENDSESSION => return 1,
+
+        c.WM_ENDSESSION => {
+            if (wparam != 0) SessionState.save(self.app, true);
             return 0;
         },
 

@@ -1095,7 +1095,17 @@ pub fn handleApply(app: *App, lparam: c.LPARAM) void {
     };
 
     if (applied) {
-        app.quit();
+        @import("SessionState.zig").save(app, true);
+        app.quitting = true;
+        app.disarmQuitTimer();
+        app.drainPendingOpenUrls();
+        app.undo_history.deinit(app);
+        if (app.selection_clipboard) |sel| {
+            app.core_app.alloc.free(sel);
+            app.selection_clipboard = null;
+        }
+        app.destroyAllWindows();
+        c.PostQuitMessage(0);
     } else {
         promptOpenReleaseOnFailure(alloc, owner, apply.html_url, "Failed to launch installer");
     }

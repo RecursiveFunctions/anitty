@@ -150,6 +150,7 @@ The defaults match Ghostty on Linux. The most used ones:
 | ------------------------------- | --------------------- |
 | `ctrl+shift+c` / `ctrl+ins`     | Copy                  |
 | `ctrl+shift+v`                  | Paste                 |
+| `shift+ins` / middle-click      | Paste selection       |
 | `ctrl+shift+t`                  | New tab               |
 | `ctrl+shift+n`                  | New window            |
 | `ctrl+shift+w`                  | Close tab             |

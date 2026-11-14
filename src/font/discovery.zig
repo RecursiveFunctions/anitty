@@ -983,6 +983,7 @@ pub const CoreText = struct {
 /// the registry) is built on first use and then scored per request.
 pub const Windows = struct {
     const freetype = @import("freetype");
+    const dwrite = @import("dwrite_fallback.zig");
 
     lib: Library,
 
@@ -1019,10 +1020,17 @@ pub const Windows = struct {
         fallback: bool,
     ) !DiscoverIterator {
         const index = try Index.get();
-        const curated: []const []const u8 = if (fallback and desc.codepoint != 0)
-            curatedFallback(desc.codepoint, index.locale)
-        else
-            &.{};
+        var dwrite_buf: [256]u8 = undefined;
+        var dwrite_list: [1][]const u8 = undefined;
+        const curated: []const []const u8 = if (fallback and desc.codepoint != 0) curated: {
+            const list = curatedFallback(desc.codepoint, index.locale);
+            if (list.len > 0) break :curated list;
+            if (dwrite.mapCodepointFamily(desc.codepoint, desc.bold, desc.italic, &dwrite_buf)) |fam| {
+                dwrite_list[0] = fam;
+                break :curated dwrite_list[0..1];
+            }
+            break :curated &.{};
+        } else &.{};
 
         var candidates: std.ArrayList(Candidate) = .empty;
         errdefer candidates.deinit(alloc);

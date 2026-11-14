@@ -50,6 +50,7 @@ key_down_pending: bool = false,
 char_decoder: key.CharDecoder = .{},
 ime_state: ime.State = .{},
 focused: bool = false,
+secure_input: bool = false,
 mouse_shape: terminal.MouseShape = .text,
 mouse_hidden: bool = false,
 mouse_tracking: bool = false,
@@ -62,6 +63,16 @@ pub fn create(
     rect: c.RECT,
     context: apprt.surface.NewSurfaceContext,
     parent_surface: ?*CoreSurface,
+) !*Surface {
+    return createWithWorkingDirectory(window, rect, context, parent_surface, null);
+}
+
+pub fn createWithWorkingDirectory(
+    window: *Window,
+    rect: c.RECT,
+    context: apprt.surface.NewSurfaceContext,
+    parent_surface: ?*CoreSurface,
+    pwd_override: ?[]const u8,
 ) !*Surface {
     const app = window.app;
     const alloc = app.core_app.alloc;
@@ -111,7 +122,11 @@ pub fn create(
 
     var config = try apprt.surface.newConfig(app.core_app, &app.config, context);
     defer config.deinit();
-    if (parent_surface) |p| {
+    if (pwd_override) |pwd| {
+        if (pwd.len > 0) {
+            config.@"working-directory" = .{ .path = try config._arena.?.allocator().dupe(u8, pwd) };
+        }
+    } else if (parent_surface) |p| {
         if (apprt.surface.shouldInheritWorkingDirectory(context, &app.config)) {
             if (try p.pwd(config._arena.?.allocator())) |pwd| config.@"working-directory" = .{ .path = pwd };
         }
@@ -177,6 +192,7 @@ pub fn unref(self: *Surface) void {
 }
 
 pub fn detachFromWindow(self: *Surface) void {
+    const prev_window = self.window;
     self.detached = true;
     if (self.inspector_window) |insp| insp.destroy();
     self.setVisible(false);
@@ -186,6 +202,7 @@ pub fn detachFromWindow(self: *Surface) void {
             _ = c.SetParent(hwnd, msg_hwnd);
         }
     }
+    prev_window.syncDisplayAffinity();
 }
 
 pub fn attachToWindow(self: *Surface, target: *Window) void {
@@ -198,6 +215,7 @@ pub fn attachToWindow(self: *Surface, target: *Window) void {
     const dpi = c.GetDpiForWindow(target_hwnd);
     const scale = @as(f32, @floatFromInt(dpi)) / 96.0;
     if (self.content_scale.x != scale) self.dpiChanged(dpi);
+    target.syncDisplayAffinity();
     self.refresh();
 }
 
@@ -293,6 +311,24 @@ pub fn setBellRinging(self: *Surface, ringing: bool) void {
     if (self.bell_ringing == ringing) return;
     self.bell_ringing = ringing;
     if (!self.detached) self.window.surfaceBellChanged(self);
+}
+
+pub fn setSecureInput(self: *Surface, mode: apprt.action.SecureInput) void {
+    const next = switch (mode) {
+        .on => true,
+        .off => false,
+        .toggle => !self.secure_input,
+    };
+    if (self.secure_input == next) return;
+    self.secure_input = next;
+    self.overlay.setSecureInput(next);
+    if (!self.detached) self.window.syncDisplayAffinity();
+    if (self.initialized) {
+        self.core_surface.renderer_state.mutex.lockUncancelable(global.io());
+        self.core_surface.io.terminal.flags.password_input = next;
+        self.core_surface.renderer_state.mutex.unlock(global.io());
+        self.refresh();
+    }
 }
 
 pub fn getContentScale(self: *const Surface) !apprt.ContentScale {
@@ -654,8 +690,8 @@ pub fn supportsClipboard(
 ) bool {
     _ = self;
     return switch (clipboard_type) {
-        .standard => true,
-        .selection, .primary => false,
+        .standard, .selection => true,
+        .primary => false,
     };
 }
 
@@ -675,7 +711,12 @@ pub fn clipboardRequest(
             return .started;
         },
         .list => {
-            const available: []const []const u8 = if (clipboard.hasText()) &.{"text/plain"} else &.{};
+            const has_text = switch (clipboard_type) {
+                .standard => clipboard.hasText(),
+                .selection => if (self.app.selection_clipboard) |s| s.len > 0 else false,
+                .primary => false,
+            };
+            const available: []const []const u8 = if (has_text) &.{"text/plain"} else &.{};
             self.completeClipboard(state, .{ .available = available }, "");
             return .started;
         },
@@ -683,6 +724,19 @@ pub fn clipboardRequest(
     }
 
     const alloc = self.app.core_app.alloc;
+    if (clipboard_type == .selection) {
+        const sel = self.app.selection_clipboard orelse return .unavailable;
+        if (sel.len == 0) return .unavailable;
+        const copy = try alloc.dupe(u8, sel);
+        defer alloc.free(copy);
+        const contents = [_]terminal.clipboard.Content{.{ .mime = "text/plain", .data = copy }};
+        self.completeClipboard(state, .{
+            .contents = &contents,
+            .available = &.{"text/plain"},
+        }, copy);
+        return .started;
+    }
+
     const text = clipboard.readText(alloc, self.hwnd) catch |err| switch (err) {
         error.ClipboardBusy => {
             log.warn("clipboard is held by another application", .{});
@@ -709,7 +763,16 @@ pub fn setClipboard(
     if (!self.supportsClipboard(clipboard_type)) return;
     const text = textContent(contents) orelse return;
     if (confirm and !self.confirmClipboard(.write, text)) return;
-    try clipboard.writeText(self.app.core_app.alloc, self.hwnd, text);
+    const alloc = self.app.core_app.alloc;
+    switch (clipboard_type) {
+        .standard => try clipboard.writeText(alloc, self.hwnd, text),
+        .selection => {
+            const copy = try alloc.dupeSentinel(u8, text, 0);
+            if (self.app.selection_clipboard) |old| alloc.free(old);
+            self.app.selection_clipboard = copy;
+        },
+        .primary => {},
+    }
 }
 
 fn textContent(contents: []const apprt.ClipboardContent) ?[:0]const u8 {

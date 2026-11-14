@@ -2527,9 +2527,9 @@ keybind: Keybinds = .{},
 /// * `none` - Do not copy selected text automatically.
 ///
 /// * `primary` - Copy to the selection clipboard only. On Linux this is the
-///   primary selection that middle-click pastes. On macOS this is a separate
-///   pasteboard private to Ghostty that the `paste_from_selection` action
-///   (Paste Selection in the Edit menu) reads, so selecting text does not
+///   primary selection that middle-click pastes. On macOS and Windows this is
+///   a separate selection buffer private to Ghostty that `paste_from_selection`
+///   and middle-click (`primary-paste`) read, so selecting text does not
 ///   replace the contents of the system clipboard. (Available since: 1.4.0)
 ///
 /// * `clipboard` - Copy text to the system clipboard only. Before 1.4.0 this
@@ -2539,12 +2539,13 @@ keybind: Keybinds = .{},
 ///   (Available since: 1.4.0)
 ///
 /// For backward compatibility and convenience, a value of `true` is the same
-/// as `primary` on Linux, FreeBSD, and macOS and `clipboard` elsewhere, and
-/// `false` is an alias for `none`.
+/// as `primary` on Linux, FreeBSD, macOS, and Windows and `clipboard`
+/// elsewhere, and `false` is an alias for `none`.
 ///
-/// The default value is `primary` on Linux and macOS and `none` otherwise.
+/// The default value is `primary` on Linux, macOS, and Windows and `none`
+/// otherwise.
 @"copy-on-select": CopyOnSelect = switch (builtin.target.os.tag) {
-    .linux, .macos => .primary,
+    .linux, .macos, .windows => .primary,
     else => .none,
 },
 
@@ -5161,10 +5162,10 @@ fn compatCopyOnSelect(
 
     if (std.mem.eql(u8, value orelse "", "true")) {
         // Before 1.4, `true` copied to the selection clipboard wherever the
-        // platform has one (including the macOS app's private selection
-        // pasteboard) and the system clipboard otherwise.
+        // platform has one (including the macOS/Windows app's private
+        // selection buffer) and the system clipboard otherwise.
         self.@"copy-on-select" = switch (builtin.target.os.tag) {
-            .linux, .freebsd, .macos => .primary,
+            .linux, .freebsd, .macos, .windows => .primary,
             else => .clipboard,
         };
         return true;
@@ -11381,7 +11382,7 @@ test "compatibility: copy-on-select true and false" {
 
         try testing.expectEqual(
             @as(CopyOnSelect, switch (builtin.target.os.tag) {
-                .linux, .freebsd, .macos => .primary,
+                .linux, .freebsd, .macos, .windows => .primary,
                 else => .clipboard,
             }),
             cfg.@"copy-on-select",
@@ -11401,7 +11402,7 @@ test "compatibility: copy-on-select true and false" {
     }
 }
 
-test "copy-on-select default uses the selection clipboard on Linux and macOS" {
+test "copy-on-select default uses the selection clipboard on Linux, macOS, and Windows" {
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -11410,7 +11411,7 @@ test "copy-on-select default uses the selection clipboard on Linux and macOS" {
 
     try testing.expectEqual(
         @as(CopyOnSelect, switch (builtin.target.os.tag) {
-            .linux, .macos => .primary,
+            .linux, .macos, .windows => .primary,
             else => .none,
         }),
         cfg.@"copy-on-select",

@@ -17,6 +17,7 @@ const TabOverview = @import("TabOverview.zig");
 const QuickTerminal = @import("QuickTerminal.zig");
 const InspectorWindow = @import("InspectorWindow.zig");
 const UndoHistory = @import("UndoHistory.zig");
+const SessionState = @import("SessionState.zig");
 const updater = @import("updater.zig");
 const hotkeyspkg = @import("hotkeys.zig");
 const jumplist = @import("jumplist.zig");
@@ -80,6 +81,8 @@ ipc: ipcpkg.Server = .{},
 hotkeys: hotkeyspkg.State = .{},
 quick_terminal: QuickTerminal = .{},
 undo_history: UndoHistory = .{},
+selection_clipboard: ?[:0]u8 = null,
+secure_input: bool = false,
 
 pub fn init(
     self: *App,
@@ -146,7 +149,10 @@ pub fn init(
     try core_app.updateConfig(self, &self.config);
     self.hotkeys.sync(self);
 
-    _ = try Window.create(self, null);
+    const has_explicit_cmd = self.config.command != null;
+    if (has_explicit_cmd or !SessionState.restore(self)) {
+        _ = try Window.create(self, null);
+    }
     self.postToSelf(WM_GHOSTTY_SYNC_JUMPLIST);
     if (!self.config._diagnostics.empty()) self.postToSelf(WM_GHOSTTY_CONFIG_ERRORS);
 }
@@ -313,6 +319,10 @@ pub fn terminate(self: *App) void {
     self.quick_terminal.deinit(self);
     self.hotkeys.deinit(self.core_app.alloc, self.msg_hwnd);
     self.undo_history.deinit(self);
+    if (self.selection_clipboard) |sel| {
+        self.core_app.alloc.free(sel);
+        self.selection_clipboard = null;
+    }
     self.destroyAllWindows();
     self.disarmQuitTimer();
     self.windows.deinit(self.core_app.alloc);
@@ -428,16 +438,21 @@ fn messageWndProc(
 
 pub fn quit(self: *App) void {
     if (self.quitting) return;
+    SessionState.save(self, false);
     self.quitting = true;
     log.debug("quitting", .{});
     self.disarmQuitTimer();
     self.drainPendingOpenUrls();
     self.undo_history.deinit(self);
+    if (self.selection_clipboard) |sel| {
+        self.core_app.alloc.free(sel);
+        self.selection_clipboard = null;
+    }
     self.destroyAllWindows();
     c.PostQuitMessage(0);
 }
 
-fn destroyAllWindows(self: *App) void {
+pub fn destroyAllWindows(self: *App) void {
     while (self.windows.items.len > 0) {
         const window = self.windows.items[self.windows.items.len - 1];
         window.destroy();
@@ -536,7 +551,7 @@ fn armQuitTimer(self: *App) void {
     if (c.SetTimer(hwnd, quit_timer_id, delay.asMilliseconds(), null) != 0) self.quit_timer_active = true;
 }
 
-fn disarmQuitTimer(self: *App) void {
+pub fn disarmQuitTimer(self: *App) void {
     if (!self.quit_timer_active) return;
     self.quit_timer_active = false;
     if (self.msg_hwnd) |hwnd| _ = c.KillTimer(hwnd, quit_timer_id);
@@ -961,9 +976,22 @@ pub fn performAction(
 
         .check_for_updates => return updater.checkForUpdates(self),
 
-        .selection_changed,
-        .secure_input,
-        => log.debug("ignored action={t}", .{action}),
+        .secure_input => switch (target) {
+            .surface => |core| core.rt_surface.setSecureInput(value),
+            .app => {
+                self.secure_input = switch (value) {
+                    .on => true,
+                    .off => false,
+                    .toggle => !self.secure_input,
+                };
+                for (self.core_app.surfaces.items) |s| {
+                    s.overlay.setSecureInput(self.secure_input or s.secure_input);
+                }
+                for (self.windows.items) |w| w.syncDisplayAffinity();
+            },
+        },
+
+        .selection_changed => log.debug("ignored action={t}", .{action}),
 
         else => return false,
     }
@@ -989,7 +1017,7 @@ fn queueOpenUrl(self: *App, value: apprt.action.OpenUrl) bool {
     return true;
 }
 
-fn drainPendingOpenUrls(self: *App) void {
+pub fn drainPendingOpenUrls(self: *App) void {
     const hwnd = self.msg_hwnd orelse return;
     var msg: c.MSG = .{};
     while (c.PeekMessageW(&msg, hwnd, WM_GHOSTTY_OPEN_URL, WM_GHOSTTY_OPEN_URL, c.PM_REMOVE).toBool()) {

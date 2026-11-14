@@ -1619,6 +1619,11 @@ pub fn wndProc(
             return 0;
         },
 
+        c.WM_GETOBJECT => {
+            if (lparam == c.OBJID_CLIENT) return 0;
+            return c.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+
         c.WM_SETFOCUS => {
             if (self.activeSurface()) |surface| {
                 if (surface.hwnd) |child| _ = c.SetFocus(child);

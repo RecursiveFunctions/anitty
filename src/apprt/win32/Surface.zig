@@ -862,6 +862,11 @@ pub fn wndProc(
 
         c.WM_ERASEBKGND => return 1,
 
+        c.WM_GETOBJECT => {
+            if (lparam == c.OBJID_CLIENT) return 0;
+            return c.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+
         c.WM_SETFOCUS => {
             self.focusChanged(true);
             if (!self.detached) self.window.surfaceFocused(self);

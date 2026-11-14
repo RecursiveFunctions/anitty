@@ -40,7 +40,7 @@
 >
 > This repository maintains an experimental, community-driven Windows port (`-Dapp-runtime=win32`) and is **not** an official [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) release.
 >
-> - **Bug Reports:** Report all Windows-specific issues and crash reports to [`RecursiveFunctions/ghostty-windows/issues`](https://github.com/RecursiveFunctions/ghostty-windows/issues). **Never** report issues from this fork to upstream `ghostty-org/ghostty`.
+> - **Bug Reports:** Report all Windows-specific issues and crash reports to [`RecursiveFunctions/ghostty-windows/issues`](https://github.com/RecursiveFunctions/ghostty-windows/issues). 
 > - **Windows Documentation & AI Disclosure:** See [`dist/windows/README-windows.md`](dist/windows/README-windows.md) for detailed Windows setup, troubleshooting, provenance, and AI assistance disclosure (in accordance with [`AI_POLICY.md`](AI_POLICY.md)).
 
 ## Overview

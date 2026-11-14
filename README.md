@@ -21,8 +21,6 @@
     ·
     <a href="#features">Features</a>
     ·
-    <a href="#why-this-port">Why This Port?</a>
-    ·
     <a href="#roadmap">Roadmap</a>
     ·
     <a href="#configuration">Configuration</a>
@@ -110,19 +108,6 @@ ghostty\
 | **Clipboard & Drag-Drop**    | Dual-format clipboard (`CF_UNICODETEXT` + `CF_HTML` rich HTML copy), `copy-on-select` selection clipboard, middle-click paste, and OLE `IDropTarget` drag-and-drop with automatic PowerShell / `cmd.exe` path quoting                                                                                                                                         |
 | **Appearance, Audio & DWM**  | Windows 11 dark/light caption & border theming (`window-theme`), dynamic OSC 10/11 chrome colors, background transparency (`background-opacity`), DWM blur/acrylic backdrop (`background-blur`), custom bell audio (`bell-audio-path`, `bell-audio-volume`) via Media Foundation, bell border flash, and sleep/display-off render throttling                  |
 | **Shell, Security & SSH**    | Auto-injection for PowerShell 7 (`pwsh.exe`), Windows PowerShell 5.1 (`powershell.exe`), and `cmd.exe`, native Windows `OSC 7` / `OSC 9;9` / `OSC 1337` CWD tracking, Taskbar Jump Lists with WSL/shell discovery, `ghostty +ssh` remote terminfo auto-installer, screen-capture protection (`toggle_secure_input`), and WinRT Toast notifications         |
-
-## Why This Port?
-
-| Capability                    | Ghostty for Windows (`win32`)                            | C# / WinUI Wrapper Ports     | Windows Terminal             | WezTerm                      | Alacritty                    |
-| ----------------------------- | -------------------------------------------------------- | ---------------------------- | ---------------------------- | ---------------------------- | ---------------------------- |
-| **UI Architecture**           | **Pure Zig Win32 (`-Dapp-runtime=win32`)**               | C# / .NET P/Invoke wrapper   | C++ / WinUI XAML Islands     | Rust (`window` crate)        | Rust (`winit`)               |
-| **Upstream Alignment**        | **Direct `apprt` in `ghostty-org/ghostty` tree (daily sync)** | Out-of-tree C ABI bridge | Separate codebase            | Separate codebase            | Separate codebase            |
-| **GPU + VM/RDP Fallback**     | **OpenGL 4.3 + DXGI Flip / D3D11 WARP fallback**         | OpenGL / ANGLE               | AtlasEngine (D3D11 / WARP)   | OpenGL / WebGPU              | OpenGL / ConPTY              |
-| **Bundled ConPTY 1.25+**      | **Yes (cursor resync on resize included)**               | Manual / inbox `conhost.exe` | Yes (`OpenConsole.exe`)      | Yes                          | Inbox `conhost.exe`          |
-| **Native Tabs & Splits**      | **Yes (with live-session Undo/Redo & Tab Overview)**     | Partial                      | Yes (no closed-tab undo)     | Yes                          | No                           |
-| **Built-In Terminal Inspector**| **Yes (Multi-dock Dear ImGui VT/Grid/Screen inspector)**| No                           | No                           | Debug overlay only           | No                           |
-| **Quick Terminal (Quake)**    | **Yes (`toggle_quick_terminal` + global hotkeys)**       | No                           | Quake mode (`Win+~`)         | QuickSelect                  | No                           |
-| **In-App SHA-256 Updater**    | **Yes (Installer & Portable ZIP)**                       | No                           | MS Store / WinGet            | External                     | External                     |
 
 ## Roadmap
 

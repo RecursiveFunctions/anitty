@@ -335,18 +335,26 @@ Open the Command Palette (`ctrl+shift+p`) and run **Check for Updates**. Ghostty
    - **Installer mode:** Launches `Ghostty-Windows-Setup-x64.exe /SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NOCANCEL /SP-` and exits so the installer upgrades and relaunches Ghostty automatically.
    - **Portable mode:** Extracts the verified ZIP, renames the running `ghostty.exe` to `ghostty.exe.old` (cleaned up on next launch), copies the updated tree into the portable folder after exit, and restarts `ghostty.exe`.
 
-### Code signing (`dist/windows/sign-file.ps1`)
+### Code signing (`dist/windows/sign-file.ps1` & SignPath Foundation EV)
 
-The release workflow (`.github/workflows/release-windows.yml`) signs `ghostty.exe` prior to `make-zip.ps1` and signs `ghostty-<version>-windows-x86_64-setup.exe` prior to generating `SHA256SUMS.txt` using `dist/windows/sign-file.ps1`.
+The release workflow (`.github/workflows/release-windows.yml`) signs `ghostty.exe` prior to `make-zip.ps1` and signs `ghostty-<version>-windows-x86_64-setup.exe` prior to generating `SHA256SUMS.txt`.
 
-Two signing modes are supported via GitHub Actions repository secrets (or local environment variables):
+Three signing modes are supported via GitHub Actions repository secrets (or local environment variables):
 
-1. **Azure Trusted Signing (OIDC or Service Principal):**
+1. **SignPath Foundation (Free Open-Source EV Code Signing — Recommended):**
+   - Apply at [about.signpath.io/product/open-source](https://about.signpath.io/product/open-source) pointing to `https://github.com/RecursiveFunctions/ghostty-windows`.
+   - In SignPath, create project `ghostty-windows`, upload `dist/windows/signpath-artifact-configuration.xml` as the Default Artifact Configuration, link the GitHub Actions Trusted Build System connector to `.github/workflows/release-windows.yml`, and create a signing policy `release-signing`.
+   - Add these repository secrets in GitHub (**Settings → Secrets and variables → Actions**):
+     - `SIGNPATH_API_TOKEN` (CI User API token from SignPath)
+     - `SIGNPATH_ORGANIZATION_ID` (your SignPath Organization UUID)
+     - `SIGNPATH_PROJECT_SLUG` (optional, defaults to `ghostty-windows`)
+     - `SIGNPATH_SIGNING_POLICY_SLUG` (optional, defaults to `release-signing`)
+2. **Azure Trusted Signing (OIDC or Service Principal):**
    Set `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`, and Azure credentials (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and OIDC or `AZURE_CLIENT_SECRET`). `sign-file.ps1` automatically fetches `Microsoft.Trusted.Signing.Client` (`Azure.CodeSigning.Dlib.dll`), signs with `http://timestamp.acs.microsoft.com`, and runs `signtool verify /pa`.
-2. **Base64 PFX Certificate:**
+3. **Base64 PFX Certificate:**
    Set `WINDOWS_PFX_BASE64` and `WINDOWS_PFX_PASSWORD`. `sign-file.ps1` decodes the PFX to a temporary file, signs via `signtool.exe sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256`, verifies with `signtool verify /pa`, and securely removes the temporary PFX.
 
-If neither secret is configured (for example on unconfigured community forks), `sign-file.ps1` logs a notice and exits `0` so CI builds still succeed.
+If no signing secret is configured (for example on unconfigured community forks), `sign-file.ps1` logs a notice and exits `0` so CI builds still succeed.
 
 ## Roadmap
 

@@ -137,8 +137,37 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File test/win32/test_shell_integration.ps1
           if ($LASTEXITCODE -ne 0) { throw "powershell shell integration test failed with $LASTEXITCODE" }
 
-      - name: Sign executable
+      - name: Check SignPath configuration
         if: env.SKIP_RELEASE != 'true'
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+        run: |
+          $useSignPath = (-not [string]::IsNullOrWhiteSpace($env:SIGNPATH_API_TOKEN)) -and (-not [string]::IsNullOrWhiteSpace($env:SIGNPATH_ORGANIZATION_ID))
+          "USE_SIGNPATH=$($useSignPath.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+
+      - name: Upload unsigned executable for SignPath
+        if: env.SKIP_RELEASE != 'true' && env.USE_SIGNPATH == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-exe
+          path: build/release/bin/ghostty.exe
+
+      - name: Sign executable with SignPath Foundation EV
+        if: env.SKIP_RELEASE != 'true' && env.USE_SIGNPATH == 'true'
+        uses: SignPath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG || 'ghostty-windows' }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: unsigned-exe
+          wait-for-completion: true
+          output-artifact-directory: build/release/bin
+
+      - name: Sign executable
+        if: env.SKIP_RELEASE != 'true' && env.USE_SIGNPATH != 'true'
         shell: pwsh
         env:
           WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
@@ -168,8 +197,32 @@ jobs:
           & $iscc "/DAppVersion=$env:VERSION" "/DSourceDir=$PWD\dist\windows\out\staging\ghostty" "/DOutputDir=$PWD\dist\windows\out" dist\windows\installer\ghostty.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
 
+      - name: Upload unsigned installer for SignPath
+        if: env.SKIP_RELEASE != 'true' && env.USE_SIGNPATH == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: dist/windows/out/ghostty-${{ env.VERSION }}-windows-x86_64-setup.exe
+
+      - name: Sign installer with SignPath Foundation EV
+        if: env.SKIP_RELEASE != 'true' && env.USE_SIGNPATH == 'true'
+        uses: SignPath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG || 'ghostty-windows' }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: unsigned-installer
+          wait-for-completion: true
+          output-artifact-directory: dist/windows/out
+
+      - name: Mark SignPath build as code-signed
+        if: env.SKIP_RELEASE != 'true' && env.USE_SIGNPATH == 'true'
+        shell: pwsh
+        run: '"CODESIGNED=true" >> $env:GITHUB_ENV'
+
       - name: Sign installer
-        if: env.SKIP_RELEASE != 'true'
+        if: env.SKIP_RELEASE != 'true' && env.USE_SIGNPATH != 'true'
         shell: pwsh
         env:
           WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}

@@ -13,6 +13,12 @@ if (-not (Test-Path -LiteralPath $FilePath)) {
 }
 $FilePath = (Resolve-Path -LiteralPath $FilePath).Path
 
+$hasSignPath = (
+    -not [string]::IsNullOrWhiteSpace($env:SIGNPATH_API_TOKEN) -and
+    -not [string]::IsNullOrWhiteSpace($env:SIGNPATH_ORGANIZATION_ID) -and
+    -not [string]::IsNullOrWhiteSpace($env:SIGNPATH_PROJECT_SLUG) -and
+    -not [string]::IsNullOrWhiteSpace($env:SIGNPATH_SIGNING_POLICY_SLUG)
+)
 $hasAzureSigning = (
     -not [string]::IsNullOrWhiteSpace($env:AZURE_SIGNING_ENDPOINT) -and
     -not [string]::IsNullOrWhiteSpace($env:AZURE_SIGNING_ACCOUNT) -and
@@ -20,8 +26,8 @@ $hasAzureSigning = (
 )
 $hasPfxSigning = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_PFX_BASE64)
 
-if (-not $hasAzureSigning -and -not $hasPfxSigning) {
-    Write-Host "Skipping Authenticode signing for '$FilePath' (neither Azure Trusted Signing nor WINDOWS_PFX_BASE64 is configured)."
+if (-not $hasSignPath -and -not $hasAzureSigning -and -not $hasPfxSigning) {
+    Write-Host "Skipping Authenticode signing for '$FilePath' (SignPath, Azure Trusted Signing, and WINDOWS_PFX_BASE64 are not configured)."
     if ($env:GITHUB_ENV -and -not $env:CODESIGNED) {
         [IO.File]::AppendAllText($env:GITHUB_ENV, "CODESIGNED=false`n")
     }
@@ -47,7 +53,45 @@ function Find-SignTool {
 $signtool = Find-SignTool
 Write-Host "Using signtool: $signtool"
 
-if ($hasAzureSigning) {
+if ($hasSignPath) {
+    Write-Host "Signing '$FilePath' with SignPath Foundation EV ($($env:SIGNPATH_PROJECT_SLUG)/$($env:SIGNPATH_SIGNING_POLICY_SLUG))..."
+    if (-not (Get-Module -ListAvailable -Name SignPath)) {
+        Install-Module -Name SignPath -Scope CurrentUser -Force -AllowClobber
+    }
+    Import-Module SignPath -Force
+
+    $workDir = Join-Path $env:TEMP ("ghostty-signpath-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force $workDir | Out-Null
+    try {
+        $fileName = Split-Path -Leaf $FilePath
+        $inputZip = Join-Path $workDir "unsigned.zip"
+        $outputZip = Join-Path $workDir "signed.zip"
+        $extractDir = Join-Path $workDir "extracted"
+
+        Compress-Archive -LiteralPath $FilePath -DestinationPath $inputZip -Force
+
+        $submitParams = @{
+            OrganizationId    = $env:SIGNPATH_ORGANIZATION_ID
+            ApiToken          = (ConvertTo-SecureString $env:SIGNPATH_API_TOKEN -AsPlainText -Force)
+            ProjectSlug       = $env:SIGNPATH_PROJECT_SLUG
+            SigningPolicySlug = $env:SIGNPATH_SIGNING_POLICY_SLUG
+            InputArtifactPath = $inputZip
+            OutputArtifactPath = $outputZip
+            WaitForCompletion = $true
+        }
+        if (-not [string]::IsNullOrWhiteSpace($env:SIGNPATH_ARTIFACT_CONFIGURATION_SLUG)) {
+            $submitParams.ArtifactConfigurationSlug = $env:SIGNPATH_ARTIFACT_CONFIGURATION_SLUG
+        }
+
+        Submit-SigningRequest @submitParams | Out-Null
+        Expand-Archive -LiteralPath $outputZip -DestinationPath $extractDir -Force
+        Copy-Item -LiteralPath (Join-Path $extractDir $fileName) -Destination $FilePath -Force
+    } finally {
+        if (Test-Path -LiteralPath $workDir) {
+            Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+} elseif ($hasAzureSigning) {
     Write-Host "Signing '$FilePath' with Azure Trusted Signing ($($env:AZURE_SIGNING_ACCOUNT)/$($env:AZURE_CERT_PROFILE))..."
 
     $workDir = if ($env:RUNNER_TEMP) {

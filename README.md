@@ -87,7 +87,7 @@ ghostty\
 ```
 
 > [!NOTE]
-> **In-App Auto-Updates & Code Signing:** Run **Check for Updates** from the Command Palette (`ctrl+shift+p`) at any time to automatically download, verify (`SHA256SUMS.txt`), and install the latest release for both Installer and Portable ZIP deployments. The CI release pipeline (`dist/windows/sign-file.ps1`) supports Authenticode signing via Azure Trusted Signing OIDC or PFX certificates; if a build was produced without signing credentials configured, Windows SmartScreen may prompt on first launch (**More info** → **Run anyway**).
+> **In-App Auto-Updates & Free EV Code Signing:** Run **Check for Updates** from the Command Palette (`ctrl+shift+p`) at any time to automatically download, verify (`SHA256SUMS.txt`), and install the latest release for both Installer and Portable ZIP deployments. The CI release pipeline (`.github/workflows/release-windows.yml`, `dist/windows/sign-file.ps1`, and `dist/windows/signpath-artifact-configuration.xml`) supports **SignPath Foundation Free Open-Source EV Code Signing**, **Azure Trusted Signing OIDC**, and **PFX certificates**; if a build was produced before signing credentials are activated, Windows SmartScreen may prompt on first launch (**More info** → **Run anyway**).
 
 ## Features
 

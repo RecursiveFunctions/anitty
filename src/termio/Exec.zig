@@ -2067,14 +2067,14 @@ fn execCommand(
                 // (extra process in the tree, per-process cmd AutoRun
                 // state not reaching the user's actual shell).
                 //
-                // Values with arguments are split on whitespace. This
-                // does not honor Windows CLI quoting rules; users who
-                // need quoted arguments should use the direct command
-                // form, which takes an argv array as-is.
+                // Values with arguments or quotes are parsed with
+                // `std.process.Args.IteratorGeneral` so quoted executable
+                // paths with spaces (e.g. `"C:\Program Files\Git\bin\bash.exe" -i -l`)
+                // stay a single token.
                 //
                 // Note we don't free any of the memory below since it is
                 // allocated in the arena.
-                if (std.mem.indexOfAny(u8, v, " \t") == null) {
+                if (std.mem.indexOfAny(u8, v, " \t\"") == null) {
                     // No arguments. If the shell is literally "cmd.exe"
                     // (the default), resolve via %COMSPEC% which is the
                     // documented path to the current command processor.
@@ -2087,9 +2087,15 @@ fn execCommand(
                         try alloc.dupe(u8, v);
                     try args.append(alloc, try alloc.dupeSentinel(u8, argv0, 0));
                 } else {
-                    var it = std.mem.tokenizeAny(u8, v, " \t");
+                    var it = try std.process.Args.IteratorGeneral(.{}).init(alloc, v);
+                    defer it.deinit();
                     while (it.next()) |tok| {
                         try args.append(alloc, try alloc.dupeSentinel(u8, tok, 0));
+                    }
+                    if (args.items.len == 1 and std.ascii.eqlIgnoreCase(args.items[0], "cmd.exe")) {
+                        const argv0 = global.environ().getAlloc(alloc, "COMSPEC") catch
+                            try alloc.dupe(u8, args.items[0]);
+                        args.items[0] = try alloc.dupeSentinel(u8, argv0, 0);
                     }
                 }
                 break :shell try args.toOwnedSlice(alloc);
@@ -2369,6 +2375,28 @@ test "execCommand windows: shell with args is split on whitespace" {
     try testing.expectEqual(2, result.len);
     try testing.expectEqualStrings("wsl", result[0]);
     try testing.expectEqualStrings("~", result[1]);
+}
+
+test "execCommand windows: quoted path with spaces stays one token" {
+    if (comptime builtin.target.os.tag != .windows) return error.SkipZigTest;
+
+    const testing = std.testing;
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const result = try execCommand(alloc, .{
+        .shell = "\"C:\\Program Files\\Git\\bin\\bash.exe\" -i -l",
+    }, struct {
+        fn get(_: Allocator) !PasswdEntry {
+            return .{};
+        }
+    });
+
+    try testing.expectEqual(3, result.len);
+    try testing.expectEqualStrings("C:\\Program Files\\Git\\bin\\bash.exe", result[0]);
+    try testing.expectEqualStrings("-i", result[1]);
+    try testing.expectEqualStrings("-l", result[2]);
 }
 
 test "execCommand windows: direct command is passed through unchanged" {

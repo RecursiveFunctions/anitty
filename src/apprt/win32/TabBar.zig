@@ -7,7 +7,10 @@ const Surface = @import("Surface.zig");
 const Window = @import("Window.zig");
 const c = @import("c.zig");
 
+const i18n = @import("../../os/main.zig").i18n;
+
 const log = std.log.scoped(.win32);
+const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
 const bar_height = 32;
 const max_tab_width = 240;
@@ -15,8 +18,22 @@ const min_tab_width = 48;
 const tab_padding = 10;
 const close_size = 16;
 const glyph_size = 8;
+const edit_id: usize = 1;
+
+const MenuCmd = enum(c.UINT_PTR) {
+    rename_tab = 1,
+    move_to_new_window = 2,
+    close_tab = 3,
+    close_other_tabs = 4,
+    close_tabs_right = 5,
+    new_tab = 6,
+};
 
 hwnd: ?c.HWND = null,
+edit_hwnd: ?c.HWND = null,
+orig_edit_proc: ?c.WNDPROC = null,
+edit_brush: ?c.HBRUSH = null,
+renaming_surface: ?*Surface = null,
 font: ?c.HFONT = null,
 hover: ?Hit = null,
 tracking: bool = false,
@@ -101,11 +118,11 @@ pub const Palette = struct {
 };
 
 pub fn create(self: *TabBar, parent: c.HWND, instance: ?c.HINSTANCE) !void {
-    _ = c.CreateWindowExW(
+    const hwnd = c.CreateWindowExW(
         0,
         App.tab_bar_class_name,
         null,
-        c.WS_CHILD | c.WS_CLIPSIBLINGS,
+        c.WS_CHILD | c.WS_CLIPSIBLINGS | c.WS_CLIPCHILDREN,
         0,
         0,
         0,
@@ -115,6 +132,26 @@ pub fn create(self: *TabBar, parent: c.HWND, instance: ?c.HINSTANCE) !void {
         instance,
         self,
     ) orelse return error.CreateWindowFailed;
+
+    const edit = c.CreateWindowExW(
+        0,
+        L("EDIT"),
+        L(""),
+        c.WS_CHILD | c.ES_AUTOHSCROLL,
+        0,
+        0,
+        0,
+        0,
+        hwnd,
+        @ptrFromInt(edit_id),
+        instance,
+        null,
+    ) orelse return error.CreateWindowFailed;
+    self.edit_hwnd = edit;
+    _ = c.SetWindowLongPtrW(edit, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+    const prev_proc = c.SetWindowLongPtrW(edit, c.GWLP_WNDPROC, @bitCast(@intFromPtr(&editSubclassProc)));
+    self.orig_edit_proc = @ptrFromInt(@as(usize, @bitCast(prev_proc)));
+
     self.updateFont();
 }
 
@@ -146,6 +183,9 @@ pub fn updateFont(self: *TabBar) void {
     const font = c.CreateFontIndirectW(&ncm.lfCaptionFont) orelse return;
     if (self.font) |old| _ = c.DeleteObject(old);
     self.font = font;
+    if (self.edit_hwnd) |edit| {
+        _ = c.SendMessageW(edit, c.WM_SETFONT, @intFromPtr(font), 1);
+    }
     self.invalidate();
 }
 
@@ -406,6 +446,7 @@ fn draggedIndex(self: *TabBar) ?usize {
 }
 
 fn beginDrag(self: *TabBar, hwnd: c.HWND, index: usize, x: i32, y: i32) void {
+    self.cancelRename(false);
     const win = self.window();
     const layout = Layout.init(self) orelse return;
     if (index >= layout.count) return;
@@ -647,6 +688,188 @@ fn endFloat(self: *TabBar, d: Drag, f: Float, commit: bool) void {
     _ = c.SetForegroundWindow(float_hwnd);
 }
 
+pub fn startRename(self: *TabBar, index: usize) void {
+    self.endDrag(false);
+    self.cancelRename(false);
+    const edit = self.edit_hwnd orelse return;
+    const win = self.window();
+    if (index >= win.tabs.items.len) return;
+    const layout = Layout.init(self) orelse return;
+    if (index >= layout.count) return;
+
+    const surface = win.tabs.items[index].focused;
+    const tab_rect = layout.tab(index);
+    const close_rect = layout.closeIn(tab_rect);
+    const pad = scale(tab_padding, layout.dpi);
+    const left = tab_rect.left + pad;
+    const right = @max(left + scale(24, layout.dpi), close_rect.left - scale(4, layout.dpi));
+    const edit_h = @max(16, layout.height - scale(10, layout.dpi));
+    const top = @divTrunc(layout.height - edit_h, 2);
+
+    const alloc = win.app.core_app.alloc;
+    const current = win.tabTitle(index);
+    const wide = std.unicode.utf8ToUtf16LeAllocZ(alloc, current) catch return;
+    defer alloc.free(wide);
+
+    self.renaming_surface = surface;
+    _ = c.SetWindowTextW(edit, wide);
+    _ = c.MoveWindow(edit, left, top, right - left, edit_h, .TRUE);
+    _ = c.ShowWindow(edit, c.SW_SHOW);
+    _ = c.SetFocus(edit);
+    _ = c.SendMessageW(edit, c.EM_SETSEL, 0, -1);
+    self.invalidate();
+}
+
+pub fn commitRename(self: *TabBar) void {
+    const surface = self.renaming_surface orelse return;
+    self.renaming_surface = null;
+    const edit = self.edit_hwnd orelse return;
+    const win = self.window();
+    const alloc = win.app.core_app.alloc;
+
+    const len: usize = @intCast(@max(0, c.GetWindowTextLengthW(edit)));
+    if (alloc.allocSentinel(u16, len, 0)) |wide| {
+        defer alloc.free(wide);
+        const n: usize = @intCast(@max(0, c.GetWindowTextW(edit, wide.ptr, @intCast(len + 1))));
+        if (std.unicode.utf16LeToUtf8AllocZ(alloc, wide[0..n])) |utf8| {
+            defer alloc.free(utf8);
+            win.setTabTitle(surface, utf8) catch |err| {
+                log.warn("error setting tab title err={}", .{err});
+            };
+        } else |_| {}
+    } else |_| {}
+
+    _ = c.ShowWindow(edit, c.SW_HIDE);
+    self.invalidate();
+    if (win.activeSurface()) |active| {
+        if (active.hwnd) |shwnd| _ = c.SetFocus(shwnd);
+    }
+}
+
+pub fn cancelRename(self: *TabBar, restore_focus: bool) void {
+    if (self.renaming_surface == null) return;
+    self.renaming_surface = null;
+    if (self.edit_hwnd) |edit| _ = c.ShowWindow(edit, c.SW_HIDE);
+    self.invalidate();
+    if (restore_focus) {
+        if (self.window().activeSurface()) |active| {
+            if (active.hwnd) |shwnd| _ = c.SetFocus(shwnd);
+        }
+    }
+}
+
+fn editSubclassProc(
+    hwnd: c.HWND,
+    msg: c.UINT,
+    wparam: c.WPARAM,
+    lparam: c.LPARAM,
+) callconv(.winapi) c.LRESULT {
+    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
+    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
+    const self: *TabBar = @ptrFromInt(ptr);
+    const orig = self.orig_edit_proc orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
+
+    switch (msg) {
+        c.WM_KEYDOWN => {
+            if (wparam == c.VK_RETURN) {
+                self.commitRename();
+                return 0;
+            }
+            if (wparam == c.VK_ESCAPE) {
+                self.cancelRename(true);
+                return 0;
+            }
+        },
+        c.WM_CHAR => {
+            if (wparam == c.VK_RETURN or wparam == c.VK_ESCAPE) return 0;
+        },
+        else => {},
+    }
+    return c.CallWindowProcW(orig, hwnd, msg, wparam, lparam);
+}
+
+fn appendMenuItem(
+    alloc: std.mem.Allocator,
+    menu: c.HMENU,
+    flags: c.UINT,
+    cmd: MenuCmd,
+    label_utf8: [*:0]const u8,
+    fallback: [:0]const u16,
+) void {
+    const wide = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(label_utf8)) catch null;
+    defer if (wide) |w| alloc.free(w);
+    _ = c.AppendMenuW(menu, flags, @backingInt(cmd), if (wide) |w| w.ptr else fallback.ptr);
+}
+
+fn showContextMenu(self: *TabBar, hwnd: c.HWND, pt_client: c.POINT) void {
+    self.endDrag(false);
+    self.cancelRename(false);
+
+    const win = self.window();
+    const alloc = win.app.core_app.alloc;
+    const layout = Layout.init(self) orelse return;
+    const hit = layout.hit(pt_client.x, pt_client.y);
+
+    const menu = c.CreatePopupMenu() orelse return;
+    defer _ = c.DestroyMenu(menu);
+
+    var target_surface: ?*Surface = null;
+    if (hit) |h| switch (h) {
+        .tab, .close => |i| if (i < win.tabs.items.len) {
+            target_surface = win.tabs.items[i].focused;
+            const multi = win.tabs.items.len > 1;
+            const has_right = i + 1 < win.tabs.items.len;
+            appendMenuItem(alloc, menu, c.MF_STRING, .rename_tab, i18n._("Rename Tab"), L("Rename Tab"));
+            appendMenuItem(alloc, menu, if (multi) c.MF_STRING else c.MF_STRING | c.MF_GRAYED, .move_to_new_window, i18n._("Move Tab to New Window"), L("Move Tab to New Window"));
+            _ = c.AppendMenuW(menu, c.MF_SEPARATOR, 0, null);
+            appendMenuItem(alloc, menu, c.MF_STRING, .close_tab, i18n._("Close Tab"), L("Close Tab"));
+            appendMenuItem(alloc, menu, if (multi) c.MF_STRING else c.MF_STRING | c.MF_GRAYED, .close_other_tabs, i18n._("Close Other Tabs"), L("Close Other Tabs"));
+            appendMenuItem(alloc, menu, if (has_right) c.MF_STRING else c.MF_STRING | c.MF_GRAYED, .close_tabs_right, i18n._("Close Tabs to the Right"), L("Close Tabs to the Right"));
+            _ = c.AppendMenuW(menu, c.MF_SEPARATOR, 0, null);
+            appendMenuItem(alloc, menu, c.MF_STRING, .new_tab, i18n._("New Tab"), L("New Tab"));
+        },
+        .new => {
+            appendMenuItem(alloc, menu, c.MF_STRING, .new_tab, i18n._("New Tab"), L("New Tab"));
+        },
+    } else {
+        appendMenuItem(alloc, menu, c.MF_STRING, .new_tab, i18n._("New Tab"), L("New Tab"));
+    }
+
+    var screen_pt = pt_client;
+    _ = c.ClientToScreen(hwnd, &screen_pt);
+    const cmd_raw = c.TrackPopupMenuEx(
+        menu,
+        c.TPM_LEFTALIGN | c.TPM_TOPALIGN | c.TPM_RIGHTBUTTON | c.TPM_RETURNCMD,
+        screen_pt.x,
+        screen_pt.y,
+        hwnd,
+        null,
+    );
+    const cmd_id: usize = @intCast(@as(c_int, @bitCast(cmd_raw)));
+    if (cmd_id == 0) return;
+    if (!alive(win.app, win)) return;
+
+    const cmd = std.enums.fromInt(MenuCmd, cmd_id) orelse return;
+    switch (cmd) {
+        .new_tab => win.newTab(null),
+        .rename_tab => if (target_surface) |s| if (win.tabIndex(s)) |idx| {
+            self.startRename(idx);
+        },
+        .move_to_new_window => if (target_surface) |s| {
+            _ = win.moveTabToNewWindow(s);
+        },
+        .close_tab => if (target_surface) |s| if (win.tabIndex(s)) |idx| {
+            win.closeTabAt(idx);
+        },
+        .close_other_tabs => if (target_surface) |s| {
+            win.closeTabs(s, .other);
+        },
+        .close_tabs_right => if (target_surface) |s| {
+            win.closeTabs(s, .right);
+        },
+    }
+}
+
 pub fn wndProc(
     hwnd: c.HWND,
     msg: c.UINT,
@@ -674,8 +897,34 @@ pub fn wndProc(
         c.WM_ERASEBKGND => return 1,
 
         c.WM_SIZE => {
+            self.cancelRename(false);
             self.invalidate();
             return 0;
+        },
+
+        c.WM_CTLCOLOREDIT => {
+            const hdc: c.HDC = @ptrFromInt(wparam);
+            const win = self.window();
+            const active_surf = win.activeSurface();
+            const palette: Palette = .initWithDynamic(
+                &win.app.config,
+                if (active_surf) |s| s.dynamic_bg else null,
+                if (active_surf) |s| s.dynamic_fg else null,
+            );
+            _ = c.SetTextColor(hdc, palette.text);
+            _ = c.SetBkColor(hdc, palette.active);
+            if (self.edit_brush) |b| _ = c.DeleteObject(b);
+            self.edit_brush = c.CreateSolidBrush(palette.active);
+            return @bitCast(@intFromPtr(self.edit_brush));
+        },
+
+        c.WM_COMMAND => {
+            const code: u16 = @truncate(wparam >> 16);
+            const id: u16 = @truncate(wparam & 0xFFFF);
+            if (id == edit_id and code == c.EN_KILLFOCUS and self.renaming_surface != null) {
+                self.commitRename();
+                return 0;
+            }
         },
 
         c.WM_DPICHANGED_AFTERPARENT => {
@@ -722,6 +971,40 @@ pub fn wndProc(
             return 0;
         },
 
+        c.WM_LBUTTONDBLCLK => {
+            self.endDrag(false);
+            const hit = self.hitAt(lparam) orelse return 0;
+            switch (hit) {
+                .tab => |i| self.startRename(i),
+                .close => |i| self.window().closeTabAt(i),
+                .new => self.window().newTab(null),
+            }
+            return 0;
+        },
+
+        c.WM_RBUTTONUP => {
+            self.showContextMenu(hwnd, .{ .x = xOf(lparam), .y = yOf(lparam) });
+            return 0;
+        },
+
+        c.WM_CONTEXTMENU => {
+            var pt: c.POINT = .{ .x = xOf(lparam), .y = yOf(lparam) };
+            if (pt.x == -1 and pt.y == -1) {
+                if (Layout.init(self)) |layout| {
+                    const win = self.window();
+                    const idx = @min(win.active, @max(layout.count, 1) - 1);
+                    const r = layout.tab(idx);
+                    pt = .{ .x = @divTrunc(r.left + r.right, 2), .y = @divTrunc(r.top + r.bottom, 2) };
+                } else {
+                    pt = .{ .x = 0, .y = 0 };
+                }
+            } else {
+                _ = c.ScreenToClient(hwnd, &pt);
+            }
+            self.showContextMenu(hwnd, pt);
+            return 0;
+        },
+
         c.WM_KEYDOWN => {
             if (wparam == c.VK_ESCAPE and self.drag != null) {
                 self.endDrag(false);
@@ -749,9 +1032,13 @@ pub fn wndProc(
         c.WM_NCDESTROY => {
             self.drag = null;
             self.drop_hint = null;
+            self.renaming_surface = null;
             _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, 0);
             if (self.font) |f| _ = c.DeleteObject(f);
+            if (self.edit_brush) |b| _ = c.DeleteObject(b);
             self.font = null;
+            self.edit_brush = null;
+            self.edit_hwnd = null;
             self.hwnd = null;
             return 0;
         },

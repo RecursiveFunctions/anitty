@@ -84,6 +84,7 @@ pub const CREATESTRUCTW = extern struct {
 
 pub const CS_VREDRAW: UINT = 0x0001;
 pub const CS_HREDRAW: UINT = 0x0002;
+pub const CS_DBLCLKS: UINT = 0x0008;
 pub const CS_OWNDC: UINT = 0x0020;
 
 pub const WS_OVERLAPPEDWINDOW: DWORD = 0x00CF0000;
@@ -173,6 +174,7 @@ pub const WM_PAINT: UINT = 0x000F;
 pub const WM_CLOSE: UINT = 0x0010;
 pub const WM_ERASEBKGND: UINT = 0x0014;
 pub const WM_GETMINMAXINFO: UINT = 0x0024;
+pub const WM_CONTEXTMENU: UINT = 0x007B;
 pub const WM_NCCREATE: UINT = 0x0081;
 pub const WM_NCDESTROY: UINT = 0x0082;
 pub const WM_SETFONT: UINT = 0x0030;
@@ -180,7 +182,15 @@ pub const WM_COMMAND: UINT = 0x0111;
 pub const WM_TIMER: UINT = 0x0113;
 pub const WM_CTLCOLOREDIT: UINT = 0x0133;
 pub const EM_SETSEL: UINT = 0x00B1;
+pub const EN_KILLFOCUS: u16 = 0x0200;
 pub const EN_CHANGE: u16 = 0x0300;
+pub const MF_STRING: UINT = 0x0000;
+pub const MF_GRAYED: UINT = 0x0001;
+pub const MF_SEPARATOR: UINT = 0x0800;
+pub const TPM_LEFTALIGN: UINT = 0x0000;
+pub const TPM_TOPALIGN: UINT = 0x0000;
+pub const TPM_RIGHTBUTTON: UINT = 0x0002;
+pub const TPM_RETURNCMD: UINT = 0x0100;
 pub const WM_DPICHANGED: UINT = 0x02E0;
 pub const WM_DPICHANGED_AFTERPARENT: UINT = 0x02E3;
 pub const WM_APP: UINT = 0x8000;
@@ -445,6 +455,7 @@ pub const MOD_SHIFT: UINT = 0x0004;
 pub const MOD_WIN: UINT = 0x0008;
 pub const MOD_NOREPEAT: UINT = 0x4000;
 pub const PM_NOREMOVE: UINT = 0;
+pub const PM_REMOVE: UINT = 1;
 pub const GWLP_WNDPROC: c_int = -4;
 pub const KLF_NOTELLSHELL: UINT = 0x80;
 
@@ -585,3 +596,7 @@ pub extern "user32" fn DeferWindowPos(hdwp: HDWP, hwnd: HWND, after: ?HWND, x: c
 pub extern "user32" fn EndDeferWindowPos(hdwp: HDWP) callconv(.winapi) BOOL;
 pub extern "user32" fn GetCursorPos(pt: *POINT) callconv(.winapi) BOOL;
 pub extern "user32" fn ScreenToClient(hwnd: HWND, pt: *POINT) callconv(.winapi) BOOL;
+pub extern "user32" fn CreatePopupMenu() callconv(.winapi) ?HMENU;
+pub extern "user32" fn DestroyMenu(menu: HMENU) callconv(.winapi) BOOL;
+pub extern "user32" fn AppendMenuW(menu: HMENU, flags: UINT, id: UINT_PTR, item: ?LPCWSTR) callconv(.winapi) BOOL;
+pub extern "user32" fn TrackPopupMenuEx(menu: HMENU, flags: UINT, x: c_int, y: c_int, hwnd: HWND, params: ?*const anyopaque) callconv(.winapi) BOOL;

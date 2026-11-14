@@ -362,6 +362,7 @@ pub fn selectSurface(self: *Window, surface: *Surface) void {
 }
 
 pub fn selectTab(self: *Window, index: usize) void {
+    self.tab_bar.cancelRename(false);
     if (index == self.active) return;
     self.activate(index, self.activeSurface());
 }
@@ -386,6 +387,7 @@ pub fn gotoTab(self: *Window, tab: apprt.action.GotoTab) bool {
 }
 
 pub fn moveTab(self: *Window, surface: *Surface, amount: isize) bool {
+    self.tab_bar.cancelRename(false);
     const total = self.tabs.items.len;
     if (total <= 1) return false;
     const pos = self.tabIndex(surface) orelse return false;
@@ -683,6 +685,7 @@ pub fn closeTabs(self: *Window, surface: *Surface, mode: apprt.action.CloseTabMo
 }
 
 fn removeTab(self: *Window, index: usize) void {
+    self.tab_bar.cancelRename(false);
     self.cancelDrag();
     if (self.tabs.items.len == 1) {
         if (!self.is_quick_terminal and self.app.canUndoCloseWindow()) {

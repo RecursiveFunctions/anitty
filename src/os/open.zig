@@ -5,6 +5,7 @@ const build_config = @import("../build_config.zig");
 const apprt = @import("../apprt.zig");
 const global = @import("../global.zig");
 const windows = @import("windows.zig");
+const UntrustedUrl = @import("../apprt/win32/UntrustedUrl.zig");
 
 const log = std.log.scoped(.@"os-open");
 
@@ -106,13 +107,13 @@ const windows_unsafe_extensions = [_][]const u8{
 
 fn openWindows(kind: apprt.action.OpenUrl.Kind, url: []const u8) !void {
     var path_buf: [windows_path_max:0]u16 = undefined;
-    const path: ?[:0]const u16 = if (kind == .osc8)
-        windowsOsc8Target(url, &path_buf) catch |err| {
-            log.warn("refusing to open OSC 8 link err={} url={s}", .{ err, url });
+    const path: ?[:0]const u16 = switch (kind) {
+        .text, .html => null,
+        .unknown, .osc8 => windowsOsc8Target(url, &path_buf) catch |err| {
+            log.warn("refusing to open untrusted link err={} url={s}", .{ err, url });
             return error.UnsafeOSC8Link;
-        }
-    else
-        null;
+        },
+    };
 
     const alloc = global.alloc();
     const target: [:0]u16 = if (path) |p|
@@ -155,31 +156,21 @@ fn windowsOsc8Target(
     url: []const u8,
     buf: *[windows_path_max:0]u16,
 ) WindowsOsc8Error!?[:0]const u16 {
-    for (url) |b| if (b < 0x20 or b == 0x7F) return error.UnsafeCharacter;
+    for (url) |b| if (b <= 0x20 or b == 0x7F or b == '\\') return error.UnsafeCharacter;
 
-    const colon = std.mem.indexOfScalar(u8, url, ':') orelse return error.MalformedURL;
-    const scheme = url[0..colon];
-    const rest = url[colon + 1 ..];
-    if (scheme.len == 0) return error.MalformedURL;
-
-    if (std.ascii.eqlIgnoreCase(scheme, "http") or
-        std.ascii.eqlIgnoreCase(scheme, "https"))
-    {
-        if (!std.mem.startsWith(u8, rest, "//")) return error.MalformedURL;
-        const authority = rest[2..];
-        const end = std.mem.indexOfAny(u8, authority, "/?#") orelse authority.len;
-        if (end == 0) return error.MalformedURL;
-        return null;
+    switch (UntrustedUrl.decide(.{ .kind = .osc8, .url = url })) {
+        .deny => {
+            const colon = std.mem.indexOfScalar(u8, url, ':') orelse return error.MalformedURL;
+            const scheme = url[0..colon];
+            if (scheme.len <= 1) return if (scheme.len == 1) error.UnsupportedScheme else error.MalformedURL;
+            return error.MalformedURL;
+        },
+        .allow, .confirm => return null,
+        .allow_file => {
+            const colon = std.mem.indexOfScalar(u8, url, ':') orelse return error.MalformedURL;
+            return try windowsFileTarget(url[colon + 1 ..], buf);
+        },
     }
-
-    if (std.ascii.eqlIgnoreCase(scheme, "mailto")) {
-        if (rest.len == 0) return error.MalformedURL;
-        return null;
-    }
-
-    if (std.ascii.eqlIgnoreCase(scheme, "file")) return try windowsFileTarget(rest, buf);
-
-    return error.UnsupportedScheme;
 }
 
 fn windowsFileTarget(
@@ -260,8 +251,9 @@ test "windows OSC 8 link safety" {
     try testing.expectEqual(null, try windowsOsc8Target("mailto:a@example.com", &buf));
     try testing.expectError(error.MalformedURL, windowsOsc8Target("https:relative", &buf));
     try testing.expectError(error.UnsafeCharacter, windowsOsc8Target("https://a\x1b.com", &buf));
-    try testing.expectError(error.UnsupportedScheme, windowsOsc8Target("ms-msdt:/id", &buf));
-    try testing.expectError(error.UnsupportedScheme, windowsOsc8Target("C:\\Windows", &buf));
+    try testing.expectEqual(null, try windowsOsc8Target("vscode://file/C:/src/main.zig", &buf));
+    try testing.expectError(error.UnsafeCharacter, windowsOsc8Target("C:\\Windows", &buf));
+    try testing.expectError(error.UnsupportedScheme, windowsOsc8Target("C:/Windows", &buf));
     try testing.expectError(error.RemoteFile, windowsOsc8Target("file://server/share/a.txt", &buf));
     try testing.expectError(error.MalformedURL, windowsOsc8Target("file:///C:/Windows?x", &buf));
     try testing.expectError(error.UnsafeFile, windowsOsc8Target("file:///C:/Windows/System32/cmd.exe", &buf));

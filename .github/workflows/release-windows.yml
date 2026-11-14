@@ -128,6 +128,15 @@ jobs:
         if: env.SKIP_RELEASE != 'true'
         run: zig build test -Dapp-runtime=win32
 
+      - name: Run PowerShell shell integration tests
+        if: env.SKIP_RELEASE != 'true'
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File test/win32/test_shell_integration.ps1
+          if ($LASTEXITCODE -ne 0) { throw "pwsh shell integration test failed with $LASTEXITCODE" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File test/win32/test_shell_integration.ps1
+          if ($LASTEXITCODE -ne 0) { throw "powershell shell integration test failed with $LASTEXITCODE" }
+
       - name: Sign executable
         if: env.SKIP_RELEASE != 'true'
         shell: pwsh

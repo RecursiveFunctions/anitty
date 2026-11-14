@@ -22,7 +22,9 @@ const hotkeyspkg = @import("hotkeys.zig");
 const taskbarpkg = @import("taskbar.zig");
 const dialogs = @import("dialogs.zig");
 const ipcpkg = @import("ipc.zig");
+const UntrustedUrl = @import("UntrustedUrl.zig");
 const internal_os = @import("../../os/main.zig");
+const i18n = internal_os.i18n;
 
 const log = std.log.scoped(.win32);
 
@@ -37,7 +39,26 @@ const WM_GHOSTTY_COLOR_SCHEME = c.WM_APP + 2;
 const WM_GHOSTTY_CONFIG_ERRORS = c.WM_APP + 3;
 const WM_GHOSTTY_CONFIRM_QUIT = c.WM_APP + 4;
 const WM_GHOSTTY_CLOSE_ALL = c.WM_APP + 5;
+const WM_GHOSTTY_OPEN_URL = c.WM_APP + 8;
 const quit_timer_id: c.UINT_PTR = 1;
+
+const OpenUrlRequest = struct {
+    kind: apprt.action.OpenUrl.Kind,
+    url: []u8,
+
+    fn create(alloc: Allocator, value: apprt.action.OpenUrl) !*OpenUrlRequest {
+        const url = try alloc.dupe(u8, value.url);
+        errdefer alloc.free(url);
+        const req = try alloc.create(OpenUrlRequest);
+        req.* = .{ .kind = value.kind, .url = url };
+        return req;
+    }
+
+    fn destroy(self: *OpenUrlRequest, alloc: Allocator) void {
+        alloc.free(self.url);
+        alloc.destroy(self);
+    }
+};
 
 core_app: *CoreApp,
 config: Config,
@@ -162,6 +183,7 @@ fn registerClasses(instance: ?c.HINSTANCE) !void {
     errdefer _ = c.UnregisterClassW(surface_class_name, instance);
 
     const tab_bar_wc: c.WNDCLASSEXW = .{
+        .style = c.CS_DBLCLKS,
         .lpfnWndProc = TabBar.wndProc,
         .hInstance = instance,
         .hCursor = cursor,
@@ -283,6 +305,7 @@ pub fn terminate(self: *App) void {
     self.windows.deinit(self.core_app.alloc);
     taskbarpkg.deinit(self);
     self.ipc.deinit(self);
+    self.drainPendingOpenUrls();
     if (self.msg_hwnd) |hwnd| {
         _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, 0);
         _ = c.DestroyWindow(hwnd);
@@ -348,6 +371,14 @@ fn messageWndProc(
             if (self.confirmTerminate(L("Close All Windows?"))) self.destroyAllWindows();
             return 0;
         },
+        WM_GHOSTTY_OPEN_URL => {
+            if (wparam != 0) {
+                const req: *OpenUrlRequest = @ptrFromInt(wparam);
+                defer req.destroy(self.core_app.alloc);
+                self.handleOpenUrl(.{ .kind = req.kind, .url = req.url });
+            }
+            return 0;
+        },
         updater.WM_GHOSTTY_UPDATE_RESULT => {
             updater.handleResult(self, lparam);
             return 0;
@@ -383,6 +414,7 @@ pub fn quit(self: *App) void {
     self.quitting = true;
     log.debug("quitting", .{});
     self.disarmQuitTimer();
+    self.drainPendingOpenUrls();
     self.undo_history.deinit(self);
     self.destroyAllWindows();
     c.PostQuitMessage(0);
@@ -751,10 +783,7 @@ pub fn performAction(
             try surface.setPwd(value.pwd);
         },
 
-        .open_url => internal_os.open(value.kind, value.url) catch |err| {
-            log.warn("error opening url err={}", .{err});
-            return false;
-        },
+        .open_url => return self.queueOpenUrl(value),
 
         .render => switch (target) {
             .app => for (self.core_app.surfaces.items) |s| s.refresh(),
@@ -925,6 +954,85 @@ pub fn performAction(
     return true;
 }
 
+fn queueOpenUrl(self: *App, value: apprt.action.OpenUrl) bool {
+    if (self.quitting) return true;
+    if (UntrustedUrl.decide(value) == .deny) {
+        log.warn("refusing to open untrusted url={s}", .{value.url});
+        return true;
+    }
+    const hwnd = self.msg_hwnd orelse return true;
+    const req = OpenUrlRequest.create(self.core_app.alloc, value) catch |err| {
+        log.warn("error allocating open_url request err={}", .{err});
+        return true;
+    };
+    if (!c.PostMessageW(hwnd, WM_GHOSTTY_OPEN_URL, @intFromPtr(req), 0).toBool()) {
+        req.destroy(self.core_app.alloc);
+        return true;
+    }
+    return true;
+}
+
+fn drainPendingOpenUrls(self: *App) void {
+    const hwnd = self.msg_hwnd orelse return;
+    var msg: c.MSG = .{};
+    while (c.PeekMessageW(&msg, hwnd, WM_GHOSTTY_OPEN_URL, WM_GHOSTTY_OPEN_URL, c.PM_REMOVE).toBool()) {
+        if (msg.wParam != 0) {
+            const req: *OpenUrlRequest = @ptrFromInt(msg.wParam);
+            req.destroy(self.core_app.alloc);
+        }
+    }
+}
+
+fn handleOpenUrl(self: *App, value: apprt.action.OpenUrl) void {
+    if (self.quitting) return;
+    switch (UntrustedUrl.decide(value)) {
+        .deny => {
+            log.warn("refusing to open untrusted url={s}", .{value.url});
+            return;
+        },
+        .confirm => {
+            if (!self.confirmOpenUrl(value.url)) return;
+        },
+        .allow, .allow_file => {},
+    }
+    internal_os.open(value.kind, value.url) catch |err| {
+        log.warn("error opening url err={}", .{err});
+    };
+}
+
+fn confirmOpenUrl(self: *App, url: []const u8) bool {
+    if (self.quitting) return false;
+    const alloc = self.core_app.alloc;
+    const main_w = std.unicode.utf8ToUtf16LeAllocZ(
+        alloc,
+        std.mem.span(i18n._("Open external link?")),
+    ) catch null;
+    defer if (main_w) |v| alloc.free(v);
+    const content_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, url) catch return false;
+    defer alloc.free(content_w);
+    const yes_w = std.unicode.utf8ToUtf16LeAllocZ(
+        alloc,
+        std.mem.span(i18n._("Open")),
+    ) catch null;
+    defer if (yes_w) |v| alloc.free(v);
+    const no_w = std.unicode.utf8ToUtf16LeAllocZ(
+        alloc,
+        std.mem.span(i18n._("Cancel")),
+    ) catch null;
+    defer if (no_w) |v| alloc.free(v);
+
+    const owner: ?c.HWND = if (self.activeWindow()) |w| w.hwnd else null;
+    const confirmed = dialogs.confirm(owner, .{
+        .main = main_w orelse L("Open external link?"),
+        .content = content_w,
+        .yes = yes_w orelse L("Open"),
+        .no = no_w orelse L("Cancel"),
+        .default_yes = false,
+        .icon = .warning,
+    });
+    return confirmed and !self.quitting;
+}
+
 pub fn performIpc(
     alloc: Allocator,
     target: apprt.ipc.Target,
@@ -932,4 +1040,19 @@ pub fn performIpc(
     value: apprt.ipc.Action.Value(action),
 ) !bool {
     return ipcpkg.send(alloc, target, action, value);
+}
+
+test "OpenUrlRequest lifecycle and message queue drain" {
+    if (comptime @import("builtin").os.tag != .windows) return error.SkipZigTest;
+
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const req = try OpenUrlRequest.create(alloc, .{
+        .kind = .osc8,
+        .url = "vscode://file/C:/src/main.zig",
+    });
+    try testing.expectEqual(apprt.action.OpenUrl.Kind.osc8, req.kind);
+    try testing.expectEqualStrings("vscode://file/C:/src/main.zig", req.url);
+    req.destroy(alloc);
 }

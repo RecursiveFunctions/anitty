@@ -1,6 +1,6 @@
 if ($env:GHOSTTY_SHELL_INTEGRATION_NO_PWSH) { return }
 if ($env:TERM_PROGRAM -ne 'ghostty') { return }
-if ($global:__GhosttyState) { return }
+if (Get-Variable -Name __GhosttyState -Scope Global -ErrorAction SilentlyContinue) { return }
 
 $global:__GhosttyState = @{
     Esc          = [string][char]27
@@ -130,7 +130,7 @@ if ($global:__GhosttyState.Redraw -and (Get-Module PSReadLine)) {
 
 function global:prompt {
     $ok = $global:?
-    $native = $global:LASTEXITCODE
+    $native = if (Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue) { $global:LASTEXITCODE } else { $null }
     $state = $global:__GhosttyState
     $e = $state.Esc
     $b = $state.Bel

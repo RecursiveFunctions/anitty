@@ -111,12 +111,20 @@ Invoke-IsolatedCase -Name 'PSConsoleHostReadLine preexec OSC 133;C and command e
         throw "Expected preexec to reset cursor with DECSCUSR 0"
     }
 
-    # Simulate failed native command with LASTEXITCODE = 42
-    $global:LASTEXITCODE = 42
-    cmd.exe /c "exit 42" 2>$null
-    $res = Capture-ConsoleAndPrompt
-    if (-not $res.ConsoleOut.Contains("$esc]133;D;42$bel")) {
-        throw "Expected postexec prompt to emit OSC 133;D;42, got: $($res.ConsoleOut)"
+    # Simulate failed native command with LASTEXITCODE = 42 immediately before prompt
+    $origOut = [Console]::Out
+    $sw = [System.IO.StringWriter]::new()
+    try {
+        [Console]::SetOut($sw)
+        cmd.exe /c "exit 42" 2>$null
+        $null = & global:prompt
+        $postexec = $sw.ToString()
+    } finally {
+        [Console]::SetOut($origOut)
+        $sw.Dispose()
+    }
+    if (-not $postexec.Contains("$esc]133;D;42$bel")) {
+        throw "Expected postexec prompt to emit OSC 133;D;42, got: $postexec"
     }
     if ($global:LASTEXITCODE -ne 42) {
         throw "Expected LASTEXITCODE to be preserved as 42, got $global:LASTEXITCODE"

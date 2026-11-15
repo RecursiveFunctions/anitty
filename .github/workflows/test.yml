@@ -1,6 +1,22 @@
 on:
-  push: {}
-  pull_request: {}
+  # Docs-only pushes must not start Test: cancel-in-progress would cancel a
+  # real build and GitHub's workflow badge treats cancelled runs as failing.
+  push:
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+      - "NOTICE"
+      - "AUTHORS"
+      - ".kilo/**"
+      - "windows/docs/**"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+      - "NOTICE"
+      - "AUTHORS"
+      - ".kilo/**"
+      - "windows/docs/**"
   workflow_dispatch: {}
 
 name: Test
@@ -15,8 +31,7 @@ jobs:
   # are other fast skip conditions, and add it as an output. Then modify
   # other tests `needs/if` to check them. Document the outputs.
   skip:
-    if: github.repository == 'ghostty-org/ghostty'
-    runs-on: namespace-profile-ghostty-xsm
+    runs-on: ${{ github.repository == 'ghostty-org/ghostty' && 'namespace-profile-ghostty-xsm' || 'ubuntu-latest' }}
     outputs:
       # 'true' when all changed files are non-code (e.g. only VOUCHED.td),
       # signaling that all other jobs can be skipped entirely.
@@ -40,6 +55,12 @@ jobs:
             code:
               - '**'
               - '!.github/VOUCHED.td'
+              - '!**/*.md'
+              - '!.kilo/**'
+              - '!LICENSE'
+              - '!NOTICE'
+              - '!AUTHORS'
+              - '!windows/docs/**'
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter_any
         with:

@@ -110,12 +110,12 @@ ISCC.exe /DAppVersion=1.4.1-windows /DSourceDir=dist\windows\out\staging\ghostty
 
 For logs, crash dumps, bundled ConPTY details, [code signing policy](dist/windows/README-windows.md#code-signing-policy), and known platform limitations, see [`dist/windows/README-windows.md`](dist/windows/README-windows.md).
 
-## Provenance & AI Disclosure
+## License
+
+MIT — see [`LICENSE`](LICENSE).
+
+## Credits
 
 - Upstream terminal core: [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) by Mitchell Hashimoto and contributors.
 - Initial Win32 runtime (`src/apprt/win32/`), WGL setup, and packaging scripts: [`phalladar/ghostty-windows`](https://github.com/phalladar/ghostty-windows) by Josh Auriemma.
 - Per [`AI_POLICY.md`](AI_POLICY.md): the Zig 0.17 rebase, CI release pipeline, and additional Win32 runtime features in this fork were developed with AI assistance (Kilo Code).
-
-## License
-
-MIT — see [`LICENSE`](LICENSE).

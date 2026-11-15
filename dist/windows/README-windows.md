@@ -9,12 +9,6 @@ that renders with OpenGL and runs shells through ConPTY. It is
 experimental: the features below work, but see
 [Known issues](#known-issues) before relying on it.
 
-## Provenance & AI Disclosure
-
-- Upstream terminal core: [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) by Mitchell Hashimoto and contributors.
-- Initial Win32 runtime (`src/apprt/win32/`), WGL setup, and packaging scripts: [`phalladar/ghostty-windows`](https://github.com/phalladar/ghostty-windows) by Josh Auriemma.
-- Per [`AI_POLICY.md`](../../AI_POLICY.md): the Zig 0.17 rebase, CI release pipeline, and additional Win32 runtime features in this fork were developed with AI assistance (Kilo Code).
-
 ## Requirements
 
 - Windows 11 (x86_64). Windows 10 (1809+) is supported via the bundled ConPTY runtime.
@@ -330,6 +324,12 @@ Open the Command Palette (`ctrl+shift+p`) and run **Check for Updates**. When a 
 
 Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
-- **Committers and reviewers:** [`@RecursiveFunctions`](https://github.com/RecursiveFunctions) and [contributors](https://github.com/RecursiveFunctions/ghostty-windows/graphs/contributors)
+- **Committers and reviewers:** [`@RecursiveFunctions`](https://github.com/RecursiveFunctions)
 - **Approvers:** [`@RecursiveFunctions`](https://github.com/RecursiveFunctions)
 - **Privacy policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+
+## Credits
+
+- Upstream terminal core: [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) by Mitchell Hashimoto and contributors.
+- Initial Win32 runtime (`src/apprt/win32/`), WGL setup, and packaging scripts: [`phalladar/ghostty-windows`](https://github.com/phalladar/ghostty-windows) by Josh Auriemma.
+- Per [`AI_POLICY.md`](../../AI_POLICY.md): the Zig 0.17 rebase, CI release pipeline, and additional Win32 runtime features in this fork were developed with AI assistance (Kilo Code).

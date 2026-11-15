@@ -101,6 +101,7 @@ jobs:
             }
           }
           [IO.File]::AppendAllText($env:GITHUB_ENV, "VERSION=$v`nTAG=$tag`nTARGET_SHA=$headSha`nSKIP_RELEASE=$skip`n")
+          $global:LASTEXITCODE = 0
 
       - name: Setup Zig
         if: env.SKIP_RELEASE != 'true'
@@ -126,7 +127,12 @@ jobs:
 
       - name: Test
         if: env.SKIP_RELEASE != 'true'
-        run: zig build test -Dapp-runtime=win32 -Dtest-filter=win32
+        shell: pwsh
+        run: |
+          zig build test -Dapp-runtime=win32 -Dtest-filter=win32
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build test-lib-vt -Dtest-filter=windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run PowerShell shell integration tests
         if: env.SKIP_RELEASE != 'true'

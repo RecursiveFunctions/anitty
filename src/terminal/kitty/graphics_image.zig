@@ -202,9 +202,11 @@ pub const LoadingImage = struct {
         path: []const u8,
     ) !void {
         // android does not support POSIX shared memory.
-        // windows is currently unsupported, does it support shm?
-        if (comptime builtin.target.abi.isAndroid() or builtin.target.os.tag == .windows) {
+        if (comptime builtin.target.abi.isAndroid()) {
             return error.UnsupportedMedium;
+        }
+        if (comptime builtin.target.os.tag == .windows) {
+            return self.readSharedMemoryWindows(alloc, t, path);
         }
 
         // libc is required for shm_open
@@ -278,6 +280,285 @@ pub const LoadingImage = struct {
 
         assert(self.data.items.len == 0);
         try self.data.appendSlice(alloc, map[range.start..range.end]);
+    }
+
+    fn readSharedMemoryWindows(
+        self: *LoadingImage,
+        alloc: Allocator,
+        t: command.Transmission,
+        path: []const u8,
+    ) !void {
+        const windows = std.os.windows;
+        const win_shm = struct {
+            const FILE_MAP_READ: windows.DWORD = 0x0004;
+            const MEMORY_BASIC_INFORMATION = extern struct {
+                BaseAddress: ?*anyopaque,
+                AllocationBase: ?*anyopaque,
+                AllocationProtect: windows.DWORD,
+                PartitionId: windows.WORD,
+                RegionSize: usize,
+                State: windows.DWORD,
+                Protect: windows.DWORD,
+                Type: windows.DWORD,
+            };
+            extern "kernel32" fn OpenFileMappingW(
+                desired_access: windows.DWORD,
+                inherit_handle: windows.BOOL,
+                name: [*:0]const u16,
+            ) callconv(.winapi) ?windows.HANDLE;
+            extern "kernel32" fn MapViewOfFile(
+                mapping: windows.HANDLE,
+                desired_access: windows.DWORD,
+                offset_high: windows.DWORD,
+                offset_low: windows.DWORD,
+                bytes_to_map: usize,
+            ) callconv(.winapi) ?*anyopaque;
+            extern "kernel32" fn UnmapViewOfFile(base: *const anyopaque) callconv(.winapi) windows.BOOL;
+            extern "kernel32" fn VirtualQuery(
+                address: ?*const anyopaque,
+                buffer: *MEMORY_BASIC_INFORMATION,
+                length: usize,
+            ) callconv(.winapi) usize;
+            extern "kernel32" fn CloseHandle(handle: windows.HANDLE) callconv(.winapi) windows.BOOL;
+        };
+
+        const clean_name = kitty_windows.checkSharedMemoryName(path) catch |err| {
+            log.warn("invalid windows shared memory name: {}", .{err});
+            return error.InvalidData;
+        };
+
+        var qualified_buf: [kitty_windows.max_shm_name_len + 8]u8 = undefined;
+        const qualified = std.fmt.bufPrint(&qualified_buf, "Local\\{s}", .{clean_name}) catch
+            return error.InvalidData;
+
+        var wide_buf: [kitty_windows.max_shm_name_len + 16:0]u16 = undefined;
+        const wide_len = std.unicode.utf8ToUtf16Le(&wide_buf, qualified) catch return error.InvalidData;
+        wide_buf[wide_len] = 0;
+
+        const handle = win_shm.OpenFileMappingW(win_shm.FILE_MAP_READ, .FALSE, wide_buf[0..wide_len :0]) orelse {
+            log.warn("unable to open windows shared memory {s}", .{qualified});
+            return error.InvalidData;
+        };
+        defer _ = win_shm.CloseHandle(handle);
+
+        const view = win_shm.MapViewOfFile(handle, win_shm.FILE_MAP_READ, 0, 0, 0) orelse {
+            log.warn("unable to map windows shared memory {s}", .{qualified});
+            return error.InvalidData;
+        };
+        defer _ = win_shm.UnmapViewOfFile(view);
+
+        var mbi: win_shm.MEMORY_BASIC_INFORMATION = undefined;
+        if (win_shm.VirtualQuery(view, &mbi, @sizeOf(win_shm.MEMORY_BASIC_INFORMATION)) == 0 or
+            mbi.RegionSize == 0)
+        {
+            return error.InvalidData;
+        }
+
+        const range = try self.sharedMemoryRange(t, mbi.RegionSize);
+        const bytes: [*]const u8 = @ptrCast(view);
+        assert(self.data.items.len == 0);
+        try self.data.appendSlice(alloc, bytes[range.start..range.end]);
+    }
+
+    test "windows shared memory: nonexistent mapping returns InvalidData" {
+        if (builtin.target.os.tag != .windows) return error.SkipZigTest;
+
+        const testing = std.testing;
+        const alloc = testing.allocator;
+        const io = testing.io;
+
+        var cmd: command.Command = .{
+            .control = .{ .transmit = .{
+                .format = .rgb,
+                .medium = .shared_memory,
+                .compression = .none,
+                .width = 1,
+                .height = 1,
+                .image_id = 42,
+            } },
+            .data = try alloc.dupe(u8, "ghostty-nonexistent-shm-test"),
+        };
+        defer cmd.deinit(alloc);
+
+        try testing.expectError(error.InvalidData, LoadingImage.init(io, alloc, &cmd, .{
+            .file = false,
+            .temporary_file = .disabled,
+            .shared_memory = true,
+        }));
+    }
+
+    test "windows shared memory: namespace prefixes are rejected" {
+        if (builtin.target.os.tag != .windows) return error.SkipZigTest;
+
+        const testing = std.testing;
+        const alloc = testing.allocator;
+        const io = testing.io;
+
+        const forbidden_names = [_][]const u8{
+            "Global\\forbidden",
+            "Session\\1\\forbidden",
+            "subdir/shm",
+            "subdir\\shm",
+            "..\\shm",
+        };
+
+        for (forbidden_names) |name| {
+            var cmd: command.Command = .{
+                .control = .{ .transmit = .{
+                    .format = .rgb,
+                    .medium = .shared_memory,
+                    .compression = .none,
+                    .width = 1,
+                    .height = 1,
+                    .image_id = 42,
+                } },
+                .data = try alloc.dupe(u8, name),
+            };
+            defer cmd.deinit(alloc);
+
+            try testing.expectError(error.InvalidData, LoadingImage.init(io, alloc, &cmd, .{
+                .file = false,
+                .temporary_file = .disabled,
+                .shared_memory = true,
+            }));
+        }
+    }
+
+    test "windows shared memory: end-to-end round trip" {
+        if (builtin.target.os.tag != .windows) return error.SkipZigTest;
+
+        const testing = std.testing;
+        const alloc = testing.allocator;
+        const io = testing.io;
+        const windows = std.os.windows;
+
+        const win_test = struct {
+            const PAGE_READWRITE: windows.DWORD = 0x04;
+            const FILE_MAP_WRITE: windows.DWORD = 0x02;
+            const FILE_MAP_READ: windows.DWORD = 0x04;
+            extern "kernel32" fn CreateFileMappingW(
+                file: windows.HANDLE,
+                attributes: ?*anyopaque,
+                protect: windows.DWORD,
+                size_high: windows.DWORD,
+                size_low: windows.DWORD,
+                name: ?[*:0]const u16,
+            ) callconv(.winapi) ?windows.HANDLE;
+            extern "kernel32" fn MapViewOfFile(
+                mapping: windows.HANDLE,
+                desired_access: windows.DWORD,
+                offset_high: windows.DWORD,
+                offset_low: windows.DWORD,
+                bytes_to_map: usize,
+            ) callconv(.winapi) ?*anyopaque;
+            extern "kernel32" fn UnmapViewOfFile(base: *const anyopaque) callconv(.winapi) windows.BOOL;
+            extern "kernel32" fn CloseHandle(handle: windows.HANDLE) callconv(.winapi) windows.BOOL;
+        };
+
+        const raw_name = "ghostty-shm-e2e-test";
+        var wide_name: [64:0]u16 = undefined;
+        const qualified = "Local\\ghostty-shm-e2e-test";
+        const len = try std.unicode.utf8ToUtf16Le(&wide_name, qualified);
+        wide_name[len] = 0;
+
+        const pixel_payload = [_]u8{ 0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00 };
+        const handle = win_test.CreateFileMappingW(
+            windows.INVALID_HANDLE_VALUE,
+            null,
+            win_test.PAGE_READWRITE,
+            0,
+            pixel_payload.len,
+            wide_name[0..len :0],
+        ) orelse return error.TestUnexpectedResult;
+        defer _ = win_test.CloseHandle(handle);
+
+        const view = win_test.MapViewOfFile(
+            handle,
+            win_test.FILE_MAP_WRITE | win_test.FILE_MAP_READ,
+            0,
+            0,
+            pixel_payload.len,
+        ) orelse return error.TestUnexpectedResult;
+        defer _ = win_test.UnmapViewOfFile(view);
+
+        const dest: [*]u8 = @ptrCast(view);
+        @memcpy(dest[0..pixel_payload.len], &pixel_payload);
+
+        var cmd: command.Command = .{
+            .control = .{ .transmit = .{
+                .format = .rgb,
+                .medium = .shared_memory,
+                .compression = .none,
+                .width = 2,
+                .height = 1,
+                .image_id = 99,
+            } },
+            .data = try alloc.dupe(u8, raw_name),
+        };
+        defer cmd.deinit(alloc);
+
+        var loading = try LoadingImage.init(io, alloc, &cmd, .{
+            .file = false,
+            .temporary_file = .disabled,
+            .shared_memory = true,
+        });
+        defer loading.deinit(alloc);
+
+        try testing.expectEqualSlices(u8, &pixel_payload, loading.data.items);
+
+        // Test sub-range read (offset + size)
+        var sub_cmd: command.Command = .{
+            .control = .{ .transmit = .{
+                .format = .rgb,
+                .medium = .shared_memory,
+                .compression = .none,
+                .width = 1,
+                .height = 1,
+                .offset = 3,
+                .size = 3,
+                .image_id = 100,
+            } },
+            .data = try alloc.dupe(u8, raw_name),
+        };
+        defer sub_cmd.deinit(alloc);
+
+        var sub_loading = try LoadingImage.init(io, alloc, &sub_cmd, .{
+            .file = false,
+            .temporary_file = .disabled,
+            .shared_memory = true,
+        });
+        defer sub_loading.deinit(alloc);
+
+        try testing.expectEqualSlices(u8, pixel_payload[3..6], sub_loading.data.items);
+
+        // Test leading slash and explicit Local\ prefix name normalization against live mapping
+        const name_variants = [_][]const u8{
+            "/ghostty-shm-e2e-test",
+            "Local\\ghostty-shm-e2e-test",
+        };
+        for (name_variants, 0..) |variant_name, idx| {
+            var var_cmd: command.Command = .{
+                .control = .{ .transmit = .{
+                    .format = .rgb,
+                    .medium = .shared_memory,
+                    .compression = .none,
+                    .width = 2,
+                    .height = 1,
+                    .image_id = @intCast(101 + idx),
+                } },
+                .data = try alloc.dupe(u8, variant_name),
+            };
+            defer var_cmd.deinit(alloc);
+
+            var var_loading = try LoadingImage.init(io, alloc, &var_cmd, .{
+                .file = false,
+                .temporary_file = .disabled,
+                .shared_memory = true,
+            });
+            defer var_loading.deinit(alloc);
+
+            try testing.expectEqualSlices(u8, &pixel_payload, var_loading.data.items);
+        }
     }
 
     const SharedMemoryRange = struct {

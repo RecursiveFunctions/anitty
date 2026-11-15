@@ -25,9 +25,6 @@
   </p>
 </p>
 
-> [!IMPORTANT]
-> This is an **unofficial community port** (`-Dapp-runtime=win32`), not an official [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) release. Report Windows bugs at [`RecursiveFunctions/ghostty-windows/issues`](https://github.com/RecursiveFunctions/ghostty-windows/issues), not upstream.
-
 ## Installation
 
 Grab the latest build from the [Releases page](https://github.com/RecursiveFunctions/ghostty-windows/releases) (for macOS and Linux, see [ghostty.org/download](https://ghostty.org/download)).

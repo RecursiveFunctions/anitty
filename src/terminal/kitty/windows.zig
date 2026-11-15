@@ -32,6 +32,10 @@ pub const Error = error{
     /// file is not on a local volume with a drive letter. The canonical
     /// path of a file on an SMB share is a UNC path, for example.
     NotDriveAbsolute,
+
+    /// A Windows shared memory mapping name is empty, too long, contains
+    /// NUL or path separators, or targets a non-Local kernel namespace.
+    InvalidSharedMemoryName,
 };
 
 /// Check a path supplied by a client before it is opened. This never
@@ -111,6 +115,81 @@ fn isReservedDeviceName(component: []const u8) bool {
             (rest[1] == 0xB9 or rest[1] == 0xB2 or rest[1] == 0xB3),
         else => false,
     };
+}
+
+/// Maximum length of a Windows file mapping object name accepted by the
+/// Kitty graphics protocol.
+pub const max_shm_name_len = 255;
+
+/// Validate a Windows file-mapping name supplied via `t=s`. Only plain
+/// single-component names (e.g. `kitty-shm-123` or `/kitty-shm-123` with
+/// a single leading slash stripped by the caller) or explicit `Local\<name>`
+/// names are accepted. `Global\`, `Session\`, and any name containing
+/// path separators, colons, or NUL bytes are rejected so a terminal
+/// stream cannot probe arbitrary kernel/LPC/device objects.
+pub fn checkSharedMemoryName(raw_name: []const u8) Error![]const u8 {
+    const stripped = if (raw_name.len > 0 and raw_name[0] == '/')
+        raw_name[1..]
+    else
+        raw_name;
+
+    if (stripped.len == 0 or stripped.len > max_shm_name_len) {
+        return error.InvalidSharedMemoryName;
+    }
+    if (std.mem.indexOfScalar(u8, stripped, 0) != null) {
+        return error.InvalidSharedMemoryName;
+    }
+
+    const rest = if (std.ascii.startsWithIgnoreCase(stripped, "Local\\")) blk: {
+        const after = stripped["Local\\".len..];
+        if (after.len == 0) return error.InvalidSharedMemoryName;
+        break :blk after;
+    } else stripped;
+
+    for (rest) |ch| {
+        if (ch == '\\' or ch == '/' or ch == ':' or ch < 0x20 or ch == 0x7f) {
+            return error.InvalidSharedMemoryName;
+        }
+    }
+    if (isReservedDeviceName(rest)) return error.InvalidSharedMemoryName;
+
+    return rest;
+}
+
+test "checkSharedMemoryName accepts safe local names and rejects namespaces" {
+    const testing = std.testing;
+
+    try testing.expectEqualStrings("kitty-123", try checkSharedMemoryName("kitty-123"));
+    try testing.expectEqualStrings("kitty-123", try checkSharedMemoryName("/kitty-123"));
+    try testing.expectEqualStrings("pixel_shm_1", try checkSharedMemoryName("Local\\pixel_shm_1"));
+    try testing.expectEqualStrings("pixel_shm_1", try checkSharedMemoryName("local\\pixel_shm_1"));
+
+    const rejected = [_][]const u8{
+        "",
+        "/",
+        "Local\\",
+        "Global\\secret",
+        "Session\\0\\secret",
+        "foo\\bar",
+        "foo/bar",
+        "/foo/bar",
+        "foo:bar",
+        "kitty\x00shm",
+        "CON",
+        "Local\\NUL",
+    };
+    for (rejected) |name| {
+        try testing.expectError(error.InvalidSharedMemoryName, checkSharedMemoryName(name));
+    }
+}
+
+test "checkSharedMemoryName rejects names exceeding the limit" {
+    var name: [max_shm_name_len + 1]u8 = undefined;
+    @memset(&name, 'a');
+    try std.testing.expectError(
+        error.InvalidSharedMemoryName,
+        checkSharedMemoryName(&name),
+    );
 }
 
 test "checkPath rejects UNC paths" {

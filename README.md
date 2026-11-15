@@ -108,15 +108,7 @@ pwsh -File dist/windows/make-zip.ps1 -Prefix build/release -Version 1.4.1-window
 ISCC.exe /DAppVersion=1.4.1-windows /DSourceDir=dist\windows\out\staging\ghostty /DOutputDir=dist\windows\out dist\windows\installer\ghostty.iss
 ```
 
-For logs, crash dumps, bundled ConPTY details, and known platform limitations, see [`dist/windows/README-windows.md`](dist/windows/README-windows.md).
-
-## Code signing policy
-
-Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
-
-- **Committers and reviewers:** [`@RecursiveFunctions`](https://github.com/RecursiveFunctions) and [contributors](https://github.com/RecursiveFunctions/ghostty-windows/graphs/contributors)
-- **Approvers:** [`@RecursiveFunctions`](https://github.com/RecursiveFunctions)
-- **Privacy policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+For logs, crash dumps, bundled ConPTY details, [code signing policy](dist/windows/README-windows.md#code-signing-policy), and known platform limitations, see [`dist/windows/README-windows.md`](dist/windows/README-windows.md).
 
 ## Provenance & AI Disclosure
 

@@ -50,6 +50,19 @@ modified: std.atomic.Value(usize) = .{ .raw = 0 },
 /// a resize operation.
 resized: std.atomic.Value(usize) = .{ .raw = 0 },
 
+/// Ring buffer of recently modified regions, indexed by
+/// `(modified - 1) % dirty_ring_len`. Allows multiple swapchain frames or
+/// surfaces to upload only the modified horizontal band(s) since their last
+/// observed `modified` counter.
+dirty_ring: [dirty_ring_len]Region = undefined,
+
+/// Monotonic counter value at which the entire atlas was last cleared or
+/// resized. Any consumer whose last synced `modified` is `< full_sync_modified`
+/// must upload the entire atlas.
+full_sync_modified: usize = 1,
+
+pub const dirty_ring_len: usize = 64;
+
 pub const Format = enum(u8) {
     /// 1 byte per pixel grayscale.
     grayscale = 0,
@@ -271,7 +284,7 @@ pub fn set(self: *Atlas, reg: Region, data: []const u8) void {
         );
     }
 
-    _ = self.modified.fetchAdd(1, .monotonic);
+    self.recordDirty(reg);
 }
 
 /// Like `set` but allows specifying a width for the source data and an
@@ -302,7 +315,35 @@ pub fn setFromLarger(
         );
     }
 
-    _ = self.modified.fetchAdd(1, .monotonic);
+    self.recordDirty(reg);
+}
+
+fn recordDirty(self: *Atlas, reg: Region) void {
+    const prev = self.modified.fetchAdd(1, .monotonic);
+    self.dirty_ring[prev % dirty_ring_len] = reg;
+}
+
+/// Returns the vertical band `[y_min, y_max)` modified between `since_modified`
+/// and the current `modified` count, or `null` if nothing is dirty. If the
+/// ring wrapped or the atlas was cleared/resized since `since_modified`,
+/// returns the full `[0, self.size)` range.
+pub fn dirtyRowsSince(self: *const Atlas, since_modified: usize) ?struct { y: u32, height: u32 } {
+    const cur = self.modified.load(.monotonic);
+    if (cur <= since_modified or self.size == 0) return null;
+    if (since_modified < self.full_sync_modified or (cur - since_modified) > dirty_ring_len) {
+        return .{ .y = 0, .height = self.size };
+    }
+    var y_min: u32 = self.size;
+    var y_max: u32 = 0;
+    var m = since_modified;
+    while (m < cur) : (m += 1) {
+        const r = self.dirty_ring[m % dirty_ring_len];
+        if (r.width == 0 or r.height == 0) continue;
+        y_min = @min(y_min, r.y);
+        y_max = @max(y_max, @min(self.size, r.y + r.height));
+    }
+    if (y_max <= y_min) return null;
+    return .{ .y = y_min, .height = y_max - y_min };
 }
 
 pub const grow_tw = tripwire.module(enum {
@@ -359,13 +400,15 @@ pub fn grow(self: *Atlas, alloc: Allocator, size_new: u32) Allocator.Error!void 
     });
 
     // We are both modified and resized
-    _ = self.modified.fetchAdd(1, .monotonic);
+    const mod = self.modified.fetchAdd(1, .monotonic) + 1;
+    self.full_sync_modified = mod;
     _ = self.resized.fetchAdd(1, .monotonic);
 }
 
 // Empty the atlas. This doesn't reclaim any previously allocated memory.
 pub fn clear(self: *Atlas) void {
-    _ = self.modified.fetchAdd(1, .monotonic);
+    const mod = self.modified.fetchAdd(1, .monotonic) + 1;
+    self.full_sync_modified = mod;
     @memset(self.data, 0);
     self.nodes.clearRetainingCapacity();
 

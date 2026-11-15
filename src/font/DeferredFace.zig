@@ -71,14 +71,16 @@ pub const Windows = struct {
     family: []const u8,
     name: []const u8,
     variations: []const font.face.Variation,
-    peek: freetype.Face,
+    peek: ?freetype.Face,
     presentation: Presentation,
 
     pub fn deinit(self: *Windows) void {
-        const mutex = self.lib.mutex;
-        mutex.lockUncancelable(global.io());
-        defer mutex.unlock(global.io());
-        self.peek.deinit();
+        if (self.peek) |peek| {
+            const mutex = self.lib.mutex;
+            mutex.lockUncancelable(global.io());
+            defer mutex.unlock(global.io());
+            peek.deinit();
+        }
         self.* = undefined;
     }
 };
@@ -235,9 +237,13 @@ fn loadWindows(
     lib: Library,
     opts: font.face.Options,
 ) !Face {
-    const w = self.win.?;
+    const w = &self.win.?;
 
-    var face = try Face.initFile(lib, w.path, w.face_index, opts);
+    var face = if (w.peek) |peek| blk: {
+        const loaded = try Face.initLoadedFace(lib, peek, opts);
+        w.peek = null;
+        break :blk loaded;
+    } else try Face.initFile(lib, w.path, w.face_index, opts);
     errdefer face.deinit();
     try face.setVariations(w.variations, opts);
     return face;
@@ -348,7 +354,8 @@ pub fn hasCodepoint(self: DeferredFace, cp: u32, p: ?Presentation) bool {
             // Use the pre-loaded peek face for a cheap CMap lookup.
             if (self.win) |w| {
                 if (p) |desired| if (w.presentation != desired) return false;
-                return w.peek.getCharIndex(cp) != null;
+                if (w.peek) |peek| return peek.getCharIndex(cp) != null;
+                return false;
             }
         },
 

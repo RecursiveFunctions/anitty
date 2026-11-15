@@ -20,10 +20,13 @@
 const Self = @This();
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const gl = @import("opengl");
 const egl = gl.egl;
 const Dmabuf = @import("../Dmabuf.zig");
+
+const is_windows = builtin.target.os.tag == .windows;
 
 const log = std.log.scoped(.opengl);
 
@@ -44,8 +47,8 @@ texture: gl.Texture,
 /// A plain RGBA8 texture + framebuffer that we blit `texture` into for
 /// dma-buf export. Mesa can't export sRGB textures, so we blit the
 /// already-sRGB-encoded pixels into this non-sRGB texture and export it.
-export_texture: gl.Texture,
-export_framebuffer: gl.Framebuffer,
+export_texture: if (is_windows) void else gl.Texture = if (is_windows) {} else undefined,
+export_framebuffer: if (is_windows) void else gl.Framebuffer = if (is_windows) {} else undefined,
 
 /// Current width of this target.
 width: usize,
@@ -88,6 +91,15 @@ pub fn init(opts: Options) !Self {
                 return error.FramebufferIncomplete;
             },
         }
+    }
+
+    if (comptime is_windows) {
+        return .{
+            .framebuffer = fbo,
+            .texture = texture,
+            .width = opts.width,
+            .height = opts.height,
+        };
     }
 
     // --- Export texture (plain RGBA8, for dma-buf export) ---
@@ -141,8 +153,10 @@ pub fn init(opts: Options) !Self {
 pub fn deinit(self: *Self) void {
     self.framebuffer.destroy();
     self.texture.destroy();
-    self.export_framebuffer.destroy();
-    self.export_texture.destroy();
+    if (comptime !is_windows) {
+        self.export_framebuffer.destroy();
+        self.export_texture.destroy();
+    }
 }
 
 pub fn exportDmabuf(

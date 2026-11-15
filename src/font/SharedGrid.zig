@@ -683,9 +683,13 @@ test "getIndex: face that fails to load is treated as no font" {
         .freetype_windows => win: {
             lib.mutex.lockUncancelable(global.io());
             defer lib.mutex.unlock(global.io());
-            const peek = try lib.lib.initMemoryFace(font.embedded.regular, 0);
+            var peek = try lib.lib.initMemoryFace(font.embedded.regular, 0);
             errdefer peek.deinit();
             try peek.selectCharmap(.unicode);
+            // Corrupt `num_charmaps` after selecting the unicode charmap so
+            // `hasCodepoint` still succeeds via `active_charmap`, while
+            // `selectCharmap` during `load()` fails.
+            peek.handle.*.num_charmaps = 0;
             break :win .{ .win = .{
                 .lib = lib,
                 .path = "Z:\\__nonexistent_ghostty_test_font__.ttf",

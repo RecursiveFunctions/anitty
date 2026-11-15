@@ -1892,16 +1892,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 if (modified <= frame.grayscale_modified) break :texture;
                 self.font_grid.lock.lockSharedUncancelable(global.io());
                 defer self.font_grid.lock.unlockShared(global.io());
+                const prev_modified = frame.grayscale_modified;
                 frame.grayscale_modified = self.font_grid.atlas_grayscale.modified.load(.monotonic);
-                try self.syncAtlasTexture(&self.font_grid.atlas_grayscale, &frame.grayscale);
+                try self.syncAtlasTexture(&self.font_grid.atlas_grayscale, prev_modified, &frame.grayscale);
             }
             texture: {
                 const modified = self.font_grid.atlas_color.modified.load(.monotonic);
                 if (modified <= frame.color_modified) break :texture;
                 self.font_grid.lock.lockSharedUncancelable(global.io());
                 defer self.font_grid.lock.unlockShared(global.io());
+                const prev_modified = frame.color_modified;
                 frame.color_modified = self.font_grid.atlas_color.modified.load(.monotonic);
-                try self.syncAtlasTexture(&self.font_grid.atlas_color, &frame.color);
+                try self.syncAtlasTexture(&self.font_grid.atlas_color, prev_modified, &frame.color);
             }
 
             // Get a frame context from the graphics API.
@@ -3677,6 +3679,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         fn syncAtlasTexture(
             self: *const Self,
             atlas: *const font.Atlas,
+            since_modified: usize,
             texture: *Texture,
         ) !void {
             if (atlas.size > texture.width) {
@@ -3685,9 +3688,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                 // Reallocate
                 texture.* = try self.api.initAtlasTexture(atlas);
+                try texture.replaceRegion(0, 0, atlas.size, atlas.size, atlas.data);
+                return;
             }
 
-            try texture.replaceRegion(0, 0, atlas.size, atlas.size, atlas.data);
+            const band = atlas.dirtyRowsSince(since_modified) orelse return;
+            const row_bytes = @as(usize, atlas.size) * atlas.format.depth();
+            const offset = @as(usize, band.y) * row_bytes;
+            const len = @as(usize, band.height) * row_bytes;
+            try texture.replaceRegion(0, band.y, atlas.size, band.height, atlas.data[offset .. offset + len]);
         }
     };
 }

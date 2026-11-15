@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const windows = std.os.windows;
+const global = @import("../../global.zig");
 pub const d3d11_presenter = @import("d3d11_presenter.zig");
 
 const log = std.log.scoped(.wgl);
@@ -165,11 +166,16 @@ const Extensions = struct {
     srgb: bool,
 };
 
+var cached_extensions: ?Extensions = null;
+var extensions_lock: std.Io.Mutex = .init;
+
 const dummy_class_name = std.unicode.utf8ToUtf16LeStringLiteral("GhosttyWglDummy");
 
 fn dummyWndProc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.winapi) LRESULT {
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
+
+var cached_opengl32: std.atomic.Value(?HMODULE) = .init(null);
 
 pub fn getProcAddress(name: [*:0]const u8) callconv(.c) ?*const anyopaque {
     if (wglGetProcAddress(name)) |p| {
@@ -178,9 +184,13 @@ pub fn getProcAddress(name: [*:0]const u8) callconv(.c) ?*const anyopaque {
             else => return @ptrCast(p),
         }
     }
-    const module = GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("opengl32.dll")) orelse
-        LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("opengl32.dll")) orelse
-        return null;
+    const module = cached_opengl32.load(.acquire) orelse blk: {
+        const m = GetModuleHandleW(std.unicode.utf8ToUtf16LeStringLiteral("opengl32.dll")) orelse
+            LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("opengl32.dll")) orelse
+            return null;
+        cached_opengl32.store(m, .release);
+        break :blk m;
+    };
     return @ptrCast(GetProcAddress(module, name));
 }
 
@@ -191,6 +201,16 @@ fn hasExtension(list: []const u8, name: []const u8) bool {
 }
 
 fn loadExtensions() !Extensions {
+    extensions_lock.lockUncancelable(global.io());
+    defer extensions_lock.unlock(global.io());
+    if (cached_extensions) |ext| return ext;
+
+    const ext = try loadExtensionsUncached();
+    cached_extensions = ext;
+    return ext;
+}
+
+fn loadExtensionsUncached() !Extensions {
     const instance: ?HINSTANCE = @ptrCast(GetModuleHandleW(null));
 
     const wc: WNDCLASSEXW = .{

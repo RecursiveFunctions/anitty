@@ -36,6 +36,11 @@ orig_edit_proc: ?c.WNDPROC = null,
 edit_brush: ?c.HBRUSH = null,
 renaming_surface: ?*Surface = null,
 font: ?c.HFONT = null,
+mem_dc: ?c.HDC = null,
+mem_bmp: ?c.HBITMAP = null,
+mem_old_bmp: ?c.HGDIOBJ = null,
+mem_w: i32 = 0,
+mem_h: i32 = 0,
 hover: ?Hit = null,
 tracking: bool = false,
 drag: ?Drag = null,
@@ -288,14 +293,20 @@ fn paint(self: *TabBar, hwnd: c.HWND) void {
     const h = rect.bottom - rect.top;
     if (w <= 0 or h <= 0) return;
 
-    const mem = c.CreateCompatibleDC(hdc) orelse return;
-    defer _ = c.DeleteDC(mem);
-    const bmp = c.CreateCompatibleBitmap(hdc, w, h) orelse return;
-    defer _ = c.DeleteObject(bmp);
-    const old_bmp = c.SelectObject(mem, bmp);
-    defer if (old_bmp) |o| {
-        _ = c.SelectObject(mem, o);
-    };
+    if (self.mem_dc == null or self.mem_bmp == null or self.mem_w != w or self.mem_h != h) {
+        self.releaseBackbuffer();
+        const mem = c.CreateCompatibleDC(hdc) orelse return;
+        const bmp = c.CreateCompatibleBitmap(hdc, w, h) orelse {
+            _ = c.DeleteDC(mem);
+            return;
+        };
+        self.mem_old_bmp = c.SelectObject(mem, bmp);
+        self.mem_dc = mem;
+        self.mem_bmp = bmp;
+        self.mem_w = w;
+        self.mem_h = h;
+    }
+    const mem = self.mem_dc.?;
     const old_font = if (self.font) |f| c.SelectObject(mem, f) else null;
     defer if (old_font) |o| {
         _ = c.SelectObject(mem, o);
@@ -303,6 +314,19 @@ fn paint(self: *TabBar, hwnd: c.HWND) void {
 
     self.draw(mem, rect);
     _ = c.BitBlt(hdc, 0, 0, w, h, mem, 0, 0, c.SRCCOPY);
+}
+
+fn releaseBackbuffer(self: *TabBar) void {
+    if (self.mem_dc) |mem| {
+        if (self.mem_old_bmp) |old| _ = c.SelectObject(mem, old);
+        _ = c.DeleteDC(mem);
+    }
+    if (self.mem_bmp) |bmp| _ = c.DeleteObject(bmp);
+    self.mem_dc = null;
+    self.mem_bmp = null;
+    self.mem_old_bmp = null;
+    self.mem_w = 0;
+    self.mem_h = 0;
 }
 
 fn draw(self: *TabBar, hdc: c.HDC, rect: c.RECT) void {
@@ -350,7 +374,6 @@ fn draw(self: *TabBar, hdc: c.HDC, rect: c.RECT) void {
 
 fn drawTab(self: *TabBar, hdc: c.HDC, palette: Palette, layout: Layout, i: usize, r: c.RECT) void {
     const win = self.window();
-    const alloc = win.app.core_app.alloc;
     const active = i == win.active;
     const hovered = if (self.hover) |hv| switch (hv) {
         .tab, .close => |idx| idx == i,
@@ -375,19 +398,29 @@ fn drawTab(self: *TabBar, hdc: c.HDC, palette: Palette, layout: Layout, i: usize
     };
     _ = c.SetTextColor(hdc, if (active) palette.text else palette.text_inactive);
     const raw_title = win.tabTitle(i);
-    const bell_prefix: []const u8 = if (win.app.config.@"bell-features".title and win.tabHasBell(i)) "\u{1F514} " else "";
-    if (std.mem.concat(alloc, u8, &.{ bell_prefix, raw_title })) |full_title| {
-        defer alloc.free(full_title);
-        if (std.unicode.utf8ToUtf16LeAlloc(alloc, full_title)) |wide| {
-            defer alloc.free(wide);
+    var wide_buf: [512]u16 = undefined;
+    var wide_len: usize = 0;
+    if (win.app.config.@"bell-features".title and win.tabHasBell(i)) {
+        const bell_prefix = L("\u{1F514} ");
+        @memcpy(wide_buf[0..bell_prefix.len], bell_prefix);
+        wide_len = bell_prefix.len;
+    }
+    const max_utf8 = @min(raw_title.len, wide_buf.len - wide_len);
+    var title_end = max_utf8;
+    if (title_end < raw_title.len) {
+        while (title_end > 0 and (raw_title[title_end] & 0xC0) == 0x80) : (title_end -= 1) {}
+    }
+    if (std.unicode.utf8ToUtf16Le(wide_buf[wide_len..], raw_title[0..title_end])) |n| {
+        wide_len += n;
+        if (wide_len > 0) {
             _ = c.DrawTextW(
                 hdc,
-                wide.ptr,
-                @intCast(wide.len),
+                &wide_buf,
+                @intCast(wide_len),
                 &text_rect,
                 c.DT_SINGLELINE | c.DT_VCENTER | c.DT_NOPREFIX | c.DT_END_ELLIPSIS,
             );
-        } else |_| {}
+        }
     } else |_| {}
 
     if (active or hovered) {
@@ -1134,6 +1167,7 @@ pub fn wndProc(
             self.drop_hint = null;
             self.renaming_surface = null;
             _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, 0);
+            self.releaseBackbuffer();
             if (self.tooltip_hwnd) |tip| _ = c.DestroyWindow(tip);
             if (self.font) |f| _ = c.DeleteObject(f);
             if (self.edit_brush) |b| _ = c.DeleteObject(b);

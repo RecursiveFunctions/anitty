@@ -89,6 +89,19 @@ pub const Face = struct {
         return try initFace(lib, face, opts);
     }
 
+    /// Initialize a new font face from an already-loaded FreeType face.
+    /// Takes ownership of `face` on success; on error, `face` is left intact
+    /// for the caller to clean up.
+    pub fn initLoadedFace(
+        lib: Library,
+        face: freetype.Face,
+        opts: font.face.Options,
+    ) !Face {
+        lib.mutex.lockUncancelable(global.io());
+        defer lib.mutex.unlock(global.io());
+        return try initFace(lib, face, opts);
+    }
+
     fn initFace(
         lib: Library,
         face: freetype.Face,

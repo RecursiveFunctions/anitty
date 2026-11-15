@@ -110,6 +110,30 @@ pub const Binding = struct {
         try errors.getError();
     }
 
+    /// Maps a range of this bound buffer's data store for writing,
+    /// invalidating the mapped range.
+    pub fn mapWriteInvalidate(
+        b: Binding,
+        size: usize,
+    ) !?[*]u8 {
+        if (size == 0) return null;
+        const ptr = glad.context.MapBufferRange.?(
+            @backingInt(b.target),
+            0,
+            @intCast(size),
+            c.GL_MAP_WRITE_BIT | c.GL_MAP_INVALIDATE_RANGE_BIT,
+        );
+        try errors.getError();
+        return @ptrCast(ptr);
+    }
+
+    /// Unmaps a previously mapped buffer.
+    pub fn unmap(b: Binding) !bool {
+        const ok = glad.context.UnmapBuffer.?(@backingInt(b.target));
+        try errors.getError();
+        return ok == c.GL_TRUE;
+    }
+
     fn dataInfo(data: anytype) struct {
         size: c.GLsizeiptr,
         ptr: *const anyopaque,

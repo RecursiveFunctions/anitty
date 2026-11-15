@@ -112,10 +112,24 @@ pub fn Buffer(comptime T: type) type {
                 );
             }
 
-            // We can fit within the buffer so we can just replace bytes.
-            var i: usize = 0;
+            if (total_len == 0) return 0;
 
+            const total_bytes = total_len * @sizeOf(T);
+            if (try binding.mapWriteInvalidate(total_bytes)) |dst| {
+                var offset: usize = 0;
+                for (lists) |list| {
+                    if (list.items.len == 0) continue;
+                    const bytes = std.mem.sliceAsBytes(list.items);
+                    @memcpy(dst[offset .. offset + bytes.len], bytes);
+                    offset += bytes.len;
+                }
+                if (try binding.unmap()) return total_len;
+            }
+
+            // Fallback if mapping is unavailable or buffer was corrupted.
+            var i: usize = 0;
             for (lists) |list| {
+                if (list.items.len == 0) continue;
                 try binding.setSubData(i, list.items);
                 i += list.items.len * @sizeOf(T);
             }

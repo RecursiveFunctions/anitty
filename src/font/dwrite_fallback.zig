@@ -6,6 +6,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const windows = std.os.windows;
+const global = @import("../global.zig");
 
 pub const HRESULT = c_long;
 pub const UINT32 = u32;
@@ -327,6 +328,54 @@ extern "kernel32" fn GetProcAddress(module: HMODULE, name: [*:0]const u8) callco
 
 const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x00000800;
 
+var dwrite_lock: std.Io.Mutex = .init;
+var cached_fallback: ?*IDWriteFontFallback = null;
+var dwrite_init_failed: bool = false;
+
+fn getSystemFontFallback() ?*IDWriteFontFallback {
+    dwrite_lock.lockUncancelable(global.io());
+    defer dwrite_lock.unlock(global.io());
+    if (cached_fallback) |fb| return fb;
+    if (dwrite_init_failed) return null;
+
+    const dwrite_mod = LoadLibraryExW(
+        std.unicode.utf8ToUtf16LeStringLiteral("dwrite.dll"),
+        null,
+        LOAD_LIBRARY_SEARCH_SYSTEM32,
+    ) orelse {
+        dwrite_init_failed = true;
+        return null;
+    };
+    const create_fn_ptr = GetProcAddress(dwrite_mod, "DWriteCreateFactory") orelse {
+        dwrite_init_failed = true;
+        return null;
+    };
+    const createFactory: *const fn (
+        DWRITE_FACTORY_TYPE,
+        *const GUID,
+        *?*anyopaque,
+    ) callconv(.winapi) HRESULT = @ptrCast(create_fn_ptr);
+
+    var raw_factory: ?*anyopaque = null;
+    if (createFactory(.SHARED, &IID_IDWriteFactory2, &raw_factory) < 0) {
+        dwrite_init_failed = true;
+        return null;
+    }
+    const factory: *IDWriteFactory2 = @ptrCast(@alignCast(raw_factory orelse {
+        dwrite_init_failed = true;
+        return null;
+    }));
+    defer factory.release();
+
+    var fallback_opt: ?*IDWriteFontFallback = null;
+    if (factory.vtable.GetSystemFontFallback(factory, &fallback_opt) < 0 or fallback_opt == null) {
+        dwrite_init_failed = true;
+        return null;
+    }
+    cached_fallback = fallback_opt;
+    return fallback_opt;
+}
+
 /// Queries DirectWrite's system font fallback for `cp` and writes the
 /// UTF-8 family name into `out_buf` if a match is found.
 pub fn mapCodepointFamily(
@@ -338,27 +387,7 @@ pub fn mapCodepointFamily(
     if (comptime builtin.os.tag != .windows) return null;
     if (cp == 0 or cp > 0x10FFFF) return null;
 
-    const dwrite_mod = LoadLibraryExW(
-        std.unicode.utf8ToUtf16LeStringLiteral("dwrite.dll"),
-        null,
-        LOAD_LIBRARY_SEARCH_SYSTEM32,
-    ) orelse return null;
-    const create_fn_ptr = GetProcAddress(dwrite_mod, "DWriteCreateFactory") orelse return null;
-    const createFactory: *const fn (
-        DWRITE_FACTORY_TYPE,
-        *const GUID,
-        *?*anyopaque,
-    ) callconv(.winapi) HRESULT = @ptrCast(create_fn_ptr);
-
-    var raw_factory: ?*anyopaque = null;
-    if (createFactory(.SHARED, &IID_IDWriteFactory2, &raw_factory) < 0) return null;
-    const factory: *IDWriteFactory2 = @ptrCast(@alignCast(raw_factory orelse return null));
-    defer factory.release();
-
-    var fallback_opt: ?*IDWriteFontFallback = null;
-    if (factory.vtable.GetSystemFontFallback(factory, &fallback_opt) < 0) return null;
-    const fallback = fallback_opt orelse return null;
-    defer fallback.release();
+    const fallback = getSystemFontFallback() orelse return null;
 
     var source = StackAnalysisSource.init(cp);
     var mapped_len: u32 = 0;

@@ -118,4 +118,8 @@ MIT — see [`LICENSE`](LICENSE).
 
 - Upstream terminal core: [`ghostty-org/ghostty`](https://github.com/ghostty-org/ghostty) by Mitchell Hashimoto and contributors.
 - Initial Win32 runtime (`src/apprt/win32/`), WGL setup, and packaging scripts: [`phalladar/ghostty-windows`](https://github.com/phalladar/ghostty-windows) by Josh Auriemma.
-- Per [`AI_POLICY.md`](AI_POLICY.md): the Zig 0.17 rebase, CI release pipeline, and additional Win32 runtime features in this fork were developed with AI assistance (Kilo Code).
+- Per [`AI_POLICY.md`](AI_POLICY.md), AI assistance was used for:
+  - Zig 0.17 rebase
+  - CI release pipeline
+  - Additional Win32 features (search overlay, command palette, tab overview, quick terminal, global hotkeys, DWM backdrop/transparency, unfocused split dimming, terminal inspector)
+- Tools: [`Kilo Code`](https://github.com/Kilo-Org/kilocode), plus home-grown grass-fed free-range gluten-free local LLMs in a homelab. Human review, builds, and testing throughout.

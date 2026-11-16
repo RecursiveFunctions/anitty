@@ -25,8 +25,7 @@
 
 ## Installation
 
-Grab the latest build from the [Releases page](https://github.com/RecursiveFunctions/ghostty-windows/releases) (for macOS and Linux, see [ghostty.org/download](https://ghostty.org/download)).
-
+Grab the latest build from the [Releases page](https://github.com/RecursiveFunctions/ghostty-windows/releases) 
 ### Installer
 
 Run `Ghostty-Windows-Setup-x64.exe`. It installs per-user into `%LOCALAPPDATA%\Programs\Ghostty` without requiring admin rights, adds a Start menu shortcut, and optionally adds **"Open Ghostty here"** to the Explorer context menu.

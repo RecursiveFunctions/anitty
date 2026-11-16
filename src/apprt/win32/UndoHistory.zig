@@ -263,8 +263,7 @@ fn captureWindowOp(alloc: Allocator, window: *Window) ?CloseWindowOp {
 
     const saved = alloc.alloc(SavedTab, window.tabs.items.len) catch return null;
     for (window.tabs.items, 0..) |tab, i| {
-        var tree = tab.tree;
-        var it = tree.iterator();
+        var it = tab.tree.iterator();
         while (it.next()) |entry| entry.view.detachFromWindow();
         saved[i] = .{
             .tree = tab.tree,
@@ -331,204 +330,235 @@ fn applyOp(
     opposite_stack: *std.ArrayList(Entry),
 ) bool {
     _ = self;
-    const alloc = app.core_app.alloc;
     const expires_ms = c.GetTickCount64() + timeoutMs(app);
+    return switch (entry.op) {
+        .split => |*s| applySplit(app, s, expires_ms, opposite_stack),
+        .close_tabs => |*ct| applyCloseTabs(app, ct, expires_ms, opposite_stack),
+        .reopen_tabs => |*rt| applyReopenTabs(app, rt, expires_ms, opposite_stack),
+        .close_window => |*cw| applyCloseWindow(app, cw, expires_ms, opposite_stack),
+        .reopen_window => |*rw| applyReopenWindow(app, rw, expires_ms, opposite_stack),
+    };
+}
 
-    switch (entry.op) {
-        .split => |*s| {
-            const loc = findTabBySurface(app, s.anchor) orelse return false;
-            const win = loc.window;
-            const tab = &win.tabs.items[loc.tab_index];
+fn applySplit(
+    app: *App,
+    s: *SplitOp,
+    expires_ms: u64,
+    opposite_stack: *std.ArrayList(Entry),
+) bool {
+    const alloc = app.core_app.alloc;
+    const loc = findTabBySurface(app, s.anchor) orelse return false;
+    const win = loc.window;
+    const tab = &win.tabs.items[loc.tab_index];
 
-            const cur_count = countLeaves(&tab.tree);
-            const target_count = countLeaves(&s.tree);
-            if (cur_count != s.expected_count) return false;
-            if (cur_count <= target_count) {
-                if (!isSubset(&tab.tree, &s.tree)) return false;
-            } else {
-                if (!isSubset(&s.tree, &tab.tree)) return false;
-            }
+    const cur_count = countLeaves(&tab.tree);
+    const target_count = countLeaves(&s.tree);
+    if (cur_count != s.expected_count) return false;
+    const valid = if (cur_count <= target_count)
+        isSubset(&tab.tree, &s.tree)
+    else
+        isSubset(&s.tree, &tab.tree);
+    if (!valid) return false;
 
-            var cur_clone = tab.tree.clone(alloc) catch return false;
-            const prev_focused = tab.focused;
+    var cur_clone = tab.tree.clone(alloc) catch return false;
+    const prev_focused = tab.focused;
 
-            // Attach any surfaces in s.tree that were detached
-            var it_new = s.tree.iterator();
-            while (it_new.next()) |node| {
-                if (node.view.detached) node.view.attachToWindow(win);
-            }
-
-            // Detach any surfaces in tab.tree that are not in s.tree
-            var it_old = tab.tree.iterator();
-            while (it_old.next()) |node| {
-                if (s.tree.locate(node.view) == null) {
-                    node.view.detachFromWindow();
-                }
-            }
-
-            win.replaceTree(tab, s.tree);
-            s.tree = .empty;
-            tab.focused = if (tab.tree.locate(s.focused) != null) s.focused else s.anchor;
-            win.selectTab(loc.tab_index);
-            win.relayout();
-            if (win.hwnd) |hwnd| _ = c.SetForegroundWindow(hwnd);
-
-            opposite_stack.append(alloc, .{
-                .expires_ms = expires_ms,
-                .op = .{
-                    .split = .{
-                        .tree = cur_clone,
-                        .focused = prev_focused,
-                        .anchor = s.anchor,
-                        .expected_count = target_count,
-                    },
-                },
-            }) catch {
-                cur_clone.deinit();
-            };
-            return true;
-        },
-
-        .close_tabs => |*ct| {
-            const target_win = if (windowAlive(app, ct.window))
-                ct.window
-            else
-                (app.activeWindow() orelse return restoreTabsAsWindow(app, &ct.tabs, 0, expires_ms, opposite_stack));
-
-            target_win.tabs.ensureUnusedCapacity(alloc, ct.tabs.len) catch return false;
-            var surfaces = alloc.alloc(*Surface, ct.tabs.len) catch return false;
-            const prev_active = target_win.activeSurface();
-
-            for (ct.tabs, 0..) |*saved, i| {
-                var it = saved.tree.iterator();
-                while (it.next()) |node| node.view.attachToWindow(target_win);
-                const insert_at = @min(saved.index, target_win.tabs.items.len);
-                target_win.tabs.insertAssumeCapacity(insert_at, .{
-                    .tree = saved.tree,
-                    .focused = saved.focused,
-                    .title_override = saved.title_override,
-                });
-                surfaces[i] = saved.focused;
-                saved.tree = .empty;
-                saved.title_override = null;
-            }
-            alloc.free(ct.tabs);
-            ct.tabs = &.{};
-
-            const focus_surface = ct.was_active orelse surfaces[0];
-            const target_idx = target_win.tabIndex(focus_surface) orelse
-                (if (surfaces.len > 0) target_win.tabIndex(surfaces[0]) else null) orelse 0;
-            target_win.activateTab(target_idx, prev_active);
-            target_win.relayout();
-            if (target_win.hwnd) |hwnd| _ = c.SetForegroundWindow(hwnd);
-
-            opposite_stack.append(alloc, .{
-                .expires_ms = expires_ms,
-                .op = .{
-                    .reopen_tabs = .{
-                        .window = target_win,
-                        .surfaces = surfaces,
-                        .was_active = prev_active,
-                    },
-                },
-            }) catch {
-                alloc.free(surfaces);
-            };
-            return true;
-        },
-
-        .reopen_tabs => |*rt| {
-            if (!windowAlive(app, rt.window)) return false;
-            const win = rt.window;
-            var saved_list: std.ArrayList(SavedTab) = .empty;
-            defer saved_list.deinit(alloc);
-
-            const cur_active = win.activeSurface();
-            for (rt.surfaces) |surf| {
-                const idx = win.tabIndex(surf) orelse continue;
-                if (win.tabs.items.len <= 1) break;
-                const orig_idx = idx + saved_list.items.len;
-                const tab = win.tabs.orderedRemove(idx);
-                var tree = tab.tree;
-                var it = tree.iterator();
-                while (it.next()) |node| node.view.detachFromWindow();
-                if (idx < win.active) {
-                    win.active -= 1;
-                } else if (idx == win.active and win.tabs.items.len > 0) {
-                    win.active = @min(idx, win.tabs.items.len - 1);
-                }
-                saved_list.append(alloc, .{
-                    .tree = tab.tree,
-                    .focused = tab.focused,
-                    .title_override = tab.title_override,
-                    .index = orig_idx,
-                }) catch {
-                    var st: SavedTab = .{
-                        .tree = tab.tree,
-                        .focused = tab.focused,
-                        .title_override = tab.title_override,
-                        .index = orig_idx,
-                    };
-                    st.deinit(alloc);
-                };
-            }
-            if (saved_list.items.len == 0) return false;
-
-            if (rt.was_active) |wa| {
-                if (win.tabIndex(wa)) |idx| win.active = idx;
-            }
-            win.activateTab(win.active, cur_active);
-            win.relayout();
-
-            const saved_slice = saved_list.toOwnedSlice(alloc) catch return true;
-            opposite_stack.append(alloc, .{
-                .expires_ms = expires_ms,
-                .op = .{
-                    .close_tabs = .{
-                        .window = win,
-                        .tabs = saved_slice,
-                        .was_active = cur_active,
-                    },
-                },
-            }) catch {
-                for (saved_slice) |*st| st.deinit(alloc);
-                alloc.free(saved_slice);
-            };
-            return true;
-        },
-
-        .close_window => |*cw| {
-            const win = Window.restoreFromUndo(app, cw) catch return false;
-            alloc.free(cw.tabs);
-            cw.tabs = &.{};
-            cw.title_override = null;
-
-            opposite_stack.append(alloc, .{
-                .expires_ms = expires_ms,
-                .op = .{
-                    .reopen_window = .{ .window = win },
-                },
-            }) catch {};
-            return true;
-        },
-
-        .reopen_window => |*rw| {
-            if (!windowAlive(app, rw.window)) return false;
-            const win = rw.window;
-            if (!app.canUndoCloseWindow()) return false;
-            var cw = captureWindowOp(alloc, win) orelse return false;
-
-            opposite_stack.append(alloc, .{
-                .expires_ms = expires_ms,
-                .op = .{ .close_window = cw },
-            }) catch {
-                cw.deinit(alloc);
-            };
-
-            if (win.hwnd) |hwnd| _ = c.DestroyWindow(hwnd);
-            return true;
-        },
+    var it_new = s.tree.iterator();
+    while (it_new.next()) |node| {
+        if (node.view.detached) node.view.attachToWindow(win);
     }
+
+    var it_old = tab.tree.iterator();
+    while (it_old.next()) |node| {
+        if (s.tree.locate(node.view) == null) {
+            node.view.detachFromWindow();
+        }
+    }
+
+    win.replaceTree(tab, s.tree);
+    s.tree = .empty;
+    tab.focused = if (tab.tree.locate(s.focused) != null) s.focused else s.anchor;
+    win.selectTab(loc.tab_index);
+    win.relayout();
+    if (win.hwnd) |hwnd| _ = c.SetForegroundWindow(hwnd);
+
+    opposite_stack.append(alloc, .{
+        .expires_ms = expires_ms,
+        .op = .{
+            .split = .{
+                .tree = cur_clone,
+                .focused = prev_focused,
+                .anchor = s.anchor,
+                .expected_count = target_count,
+            },
+        },
+    }) catch {
+        cur_clone.deinit();
+    };
+    return true;
+}
+
+fn applyCloseTabs(
+    app: *App,
+    ct: *CloseTabsOp,
+    expires_ms: u64,
+    opposite_stack: *std.ArrayList(Entry),
+) bool {
+    const alloc = app.core_app.alloc;
+    const target_win = if (windowAlive(app, ct.window))
+        ct.window
+    else
+        (app.activeWindow() orelse return restoreTabsAsWindow(app, &ct.tabs, 0, expires_ms, opposite_stack));
+
+    target_win.tabs.ensureUnusedCapacity(alloc, ct.tabs.len) catch return false;
+    const surfaces = alloc.alloc(*Surface, ct.tabs.len) catch return false;
+    const prev_active = target_win.activeSurface();
+
+    for (ct.tabs, 0..) |*saved, i| {
+        var it = saved.tree.iterator();
+        while (it.next()) |node| node.view.attachToWindow(target_win);
+        const insert_at = @min(saved.index, target_win.tabs.items.len);
+        target_win.tabs.insertAssumeCapacity(insert_at, .{
+            .tree = saved.tree,
+            .focused = saved.focused,
+            .title_override = saved.title_override,
+        });
+        surfaces[i] = saved.focused;
+        saved.tree = .empty;
+        saved.title_override = null;
+    }
+    alloc.free(ct.tabs);
+    ct.tabs = &.{};
+
+    const focus_surface = ct.was_active orelse surfaces[0];
+    const target_idx = target_win.tabIndex(focus_surface) orelse
+        (if (surfaces.len > 0) target_win.tabIndex(surfaces[0]) else null) orelse 0;
+    target_win.activateTab(target_idx, prev_active);
+    target_win.relayout();
+    if (target_win.hwnd) |hwnd| _ = c.SetForegroundWindow(hwnd);
+
+    opposite_stack.append(alloc, .{
+        .expires_ms = expires_ms,
+        .op = .{
+            .reopen_tabs = .{
+                .window = target_win,
+                .surfaces = surfaces,
+                .was_active = prev_active,
+            },
+        },
+    }) catch {
+        alloc.free(surfaces);
+    };
+    return true;
+}
+
+fn applyReopenTabs(
+    app: *App,
+    rt: *ReopenTabsOp,
+    expires_ms: u64,
+    opposite_stack: *std.ArrayList(Entry),
+) bool {
+    const alloc = app.core_app.alloc;
+    if (!windowAlive(app, rt.window)) return false;
+    const win = rt.window;
+    var saved_list: std.ArrayList(SavedTab) = .empty;
+    defer saved_list.deinit(alloc);
+
+    const cur_active = win.activeSurface();
+    for (rt.surfaces) |surf| {
+        const idx = win.tabIndex(surf) orelse continue;
+        if (win.tabs.items.len <= 1) break;
+        const orig_idx = idx + saved_list.items.len;
+        const tab = win.tabs.orderedRemove(idx);
+        var it = tab.tree.iterator();
+        while (it.next()) |node| node.view.detachFromWindow();
+        if (idx < win.active) {
+            win.active -= 1;
+        } else if (idx == win.active and win.tabs.items.len > 0) {
+            win.active = @min(idx, win.tabs.items.len - 1);
+        }
+        saved_list.append(alloc, .{
+            .tree = tab.tree,
+            .focused = tab.focused,
+            .title_override = tab.title_override,
+            .index = orig_idx,
+        }) catch {
+            var st: SavedTab = .{
+                .tree = tab.tree,
+                .focused = tab.focused,
+                .title_override = tab.title_override,
+                .index = orig_idx,
+            };
+            st.deinit(alloc);
+        };
+    }
+    if (saved_list.items.len == 0) return false;
+
+    if (rt.was_active) |wa| {
+        if (win.tabIndex(wa)) |idx| win.active = idx;
+    }
+    win.activateTab(win.active, cur_active);
+    win.relayout();
+
+    const saved_slice = saved_list.toOwnedSlice(alloc) catch return true;
+    opposite_stack.append(alloc, .{
+        .expires_ms = expires_ms,
+        .op = .{
+            .close_tabs = .{
+                .window = win,
+                .tabs = saved_slice,
+                .was_active = cur_active,
+            },
+        },
+    }) catch {
+        for (saved_slice) |*st| st.deinit(alloc);
+        alloc.free(saved_slice);
+    };
+    return true;
+}
+
+fn applyCloseWindow(
+    app: *App,
+    cw: *CloseWindowOp,
+    expires_ms: u64,
+    opposite_stack: *std.ArrayList(Entry),
+) bool {
+    const alloc = app.core_app.alloc;
+    const win = Window.restoreFromUndo(app, cw) catch return false;
+    alloc.free(cw.tabs);
+    cw.tabs = &.{};
+    cw.title_override = null;
+
+    opposite_stack.append(alloc, .{
+        .expires_ms = expires_ms,
+        .op = .{
+            .reopen_window = .{ .window = win },
+        },
+    }) catch {};
+    return true;
+}
+
+fn applyReopenWindow(
+    app: *App,
+    rw: *const ReopenWindowOp,
+    expires_ms: u64,
+    opposite_stack: *std.ArrayList(Entry),
+) bool {
+    const alloc = app.core_app.alloc;
+    if (!windowAlive(app, rw.window)) return false;
+    const win = rw.window;
+    if (!app.canUndoCloseWindow()) return false;
+    var cw = captureWindowOp(alloc, win) orelse return false;
+
+    opposite_stack.append(alloc, .{
+        .expires_ms = expires_ms,
+        .op = .{ .close_window = cw },
+    }) catch {
+        cw.deinit(alloc);
+    };
+
+    if (win.hwnd) |hwnd| _ = c.DestroyWindow(hwnd);
+    return true;
 }
 
 fn restoreTabsAsWindow(

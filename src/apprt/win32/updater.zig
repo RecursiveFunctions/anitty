@@ -15,13 +15,13 @@ const L = std.unicode.utf8ToUtf16LeStringLiteral;
 pub const WM_GHOSTTY_UPDATE_RESULT: c.UINT = c.WM_APP + 6;
 pub const WM_GHOSTTY_UPDATE_APPLY: c.UINT = c.WM_APP + 7;
 
-const releases_page_url = "https://github.com/RecursiveFunctions/ghostty-windows/releases/latest";
+const releases_page_url = "https://github.com/RecursiveFunctions/anitty/releases/latest";
 const api_host = L("api.github.com");
-const api_path = L("/repos/RecursiveFunctions/ghostty-windows/releases/latest");
+const api_path = L("/repos/RecursiveFunctions/anitty/releases/latest");
 const api_headers = L("Accept: application/vnd.github+json\r\n");
 
-pub const setup_asset_name = "Ghostty-Windows-Setup-x64.exe";
-pub const zip_asset_name = "Ghostty-Windows-x64.zip";
+pub const setup_asset_name = "Anitty-Windows-Setup-x64.exe";
+pub const zip_asset_name = "Anitty-Windows-x64.zip";
 pub const sha256_asset_name = "SHA256SUMS.txt";
 
 pub const InstallKind = enum {
@@ -38,20 +38,9 @@ const WINHTTP_FLAG_SECURE: c.DWORD = 0x00800000;
 const WINHTTP_QUERY_STATUS_CODE: c.DWORD = 19;
 const WINHTTP_QUERY_FLAG_NUMBER: c.DWORD = 0x20000000;
 
-const LOAD_LIBRARY_SEARCH_SYSTEM32: c.DWORD = 0x00000800;
-const MOVEFILE_REPLACE_EXISTING: c.DWORD = 0x00000001;
-const CREATE_NO_WINDOW: c.DWORD = 0x08000000;
-
-extern "kernel32" fn LoadLibraryExW(name: c.LPCWSTR, hFile: ?*anyopaque, dwFlags: c.DWORD) callconv(.winapi) ?c.HINSTANCE;
-extern "kernel32" fn GetProcAddress(module: c.HINSTANCE, name: [*:0]const u8) callconv(.winapi) ?*const anyopaque;
-extern "kernel32" fn CreateDirectoryW(lpPathName: c.LPCWSTR, lpSecurityAttributes: ?*anyopaque) callconv(.winapi) c.BOOL;
-extern "kernel32" fn DeleteFileW(lpFileName: c.LPCWSTR) callconv(.winapi) c.BOOL;
-extern "kernel32" fn MoveFileExW(lpExistingFileName: c.LPCWSTR, lpNewFileName: ?c.LPCWSTR, dwFlags: c.DWORD) callconv(.winapi) c.BOOL;
-extern "kernel32" fn GetSystemDirectoryW(lpBuffer: [*]u16, uSize: c.UINT) callconv(.winapi) c.UINT;
-
 fn systemPowerShellPath(alloc: Allocator) ![:0]u16 {
     var sys_buf: [512]u16 = undefined;
-    const len = GetSystemDirectoryW(&sys_buf, sys_buf.len);
+    const len = c.GetSystemDirectoryW(&sys_buf, sys_buf.len);
     if (len == 0 or len >= sys_buf.len) return error.SystemDirectoryUnavailable;
     const suffix = L("\\WindowsPowerShell\\v1.0\\powershell.exe");
     const out = try alloc.allocSentinel(u16, len + suffix.len, 0);
@@ -145,20 +134,20 @@ var winhttp_loaded: std.atomic.Value(bool) = .init(false);
 
 fn loadWinHttp() ?WinHttpApis {
     if (winhttp_loaded.load(.acquire)) return winhttp_apis;
-    const mod = LoadLibraryExW(L("winhttp.dll"), null, LOAD_LIBRARY_SEARCH_SYSTEM32) orelse {
+    const mod = c.LoadLibraryExW(L("winhttp.dll"), null, c.LOAD_LIBRARY_SEARCH_SYSTEM32) orelse {
         winhttp_loaded.store(true, .release);
         return null;
     };
     const apis: WinHttpApis = .{
-        .WinHttpOpen = @ptrCast(GetProcAddress(mod, "WinHttpOpen") orelse return null),
-        .WinHttpConnect = @ptrCast(GetProcAddress(mod, "WinHttpConnect") orelse return null),
-        .WinHttpOpenRequest = @ptrCast(GetProcAddress(mod, "WinHttpOpenRequest") orelse return null),
-        .WinHttpSetTimeouts = @ptrCast(GetProcAddress(mod, "WinHttpSetTimeouts") orelse return null),
-        .WinHttpSendRequest = @ptrCast(GetProcAddress(mod, "WinHttpSendRequest") orelse return null),
-        .WinHttpReceiveResponse = @ptrCast(GetProcAddress(mod, "WinHttpReceiveResponse") orelse return null),
-        .WinHttpQueryHeaders = @ptrCast(GetProcAddress(mod, "WinHttpQueryHeaders") orelse return null),
-        .WinHttpReadData = @ptrCast(GetProcAddress(mod, "WinHttpReadData") orelse return null),
-        .WinHttpCloseHandle = @ptrCast(GetProcAddress(mod, "WinHttpCloseHandle") orelse return null),
+        .WinHttpOpen = @ptrCast(c.GetProcAddress(mod, "WinHttpOpen") orelse return null),
+        .WinHttpConnect = @ptrCast(c.GetProcAddress(mod, "WinHttpConnect") orelse return null),
+        .WinHttpOpenRequest = @ptrCast(c.GetProcAddress(mod, "WinHttpOpenRequest") orelse return null),
+        .WinHttpSetTimeouts = @ptrCast(c.GetProcAddress(mod, "WinHttpSetTimeouts") orelse return null),
+        .WinHttpSendRequest = @ptrCast(c.GetProcAddress(mod, "WinHttpSendRequest") orelse return null),
+        .WinHttpReceiveResponse = @ptrCast(c.GetProcAddress(mod, "WinHttpReceiveResponse") orelse return null),
+        .WinHttpQueryHeaders = @ptrCast(c.GetProcAddress(mod, "WinHttpQueryHeaders") orelse return null),
+        .WinHttpReadData = @ptrCast(c.GetProcAddress(mod, "WinHttpReadData") orelse return null),
+        .WinHttpCloseHandle = @ptrCast(c.GetProcAddress(mod, "WinHttpCloseHandle") orelse return null),
     };
     winhttp_apis = apis;
     winhttp_loaded.store(true, .release);
@@ -174,16 +163,17 @@ pub fn cleanupOldExecutable() void {
     const suffix = L(".old");
     @memcpy(exe_buf[len .. len + suffix.len], suffix);
     exe_buf[len + suffix.len] = 0;
-    _ = DeleteFileW(@ptrCast(&exe_buf));
+    _ = c.DeleteFileW(@ptrCast(&exe_buf));
 
     const exe_slice = exe_buf[0..len];
     if (std.mem.lastIndexOfAny(u16, exe_slice, &.{ '\\', '/' })) |sep| {
         const dir = exe_slice[0 .. sep + 1];
-        const conpty_old = L("conpty.dll.old");
-        if (dir.len + conpty_old.len < exe_buf.len) {
-            @memcpy(exe_buf[dir.len .. dir.len + conpty_old.len], conpty_old);
-            exe_buf[dir.len + conpty_old.len] = 0;
-            _ = DeleteFileW(@ptrCast(&exe_buf));
+        inline for (.{ L("conpty.dll.old"), L("ghostty.exe.old"), L("ghostty.exe") }) |old_name| {
+            if (dir.len + old_name.len < exe_buf.len) {
+                @memcpy(exe_buf[dir.len .. dir.len + old_name.len], old_name);
+                exe_buf[dir.len + old_name.len] = 0;
+                _ = c.DeleteFileW(@ptrCast(&exe_buf));
+            }
         }
     }
 }
@@ -356,43 +346,63 @@ pub fn parseReleaseJson(alloc: Allocator, json_bytes: []const u8) !ReleaseInfo {
     };
 }
 
-fn fetchLatestRelease(alloc: Allocator) !ReleaseInfo {
-    const http = loadWinHttp() orelse return error.WinHttpLoadFailed;
+const HttpHandles = struct {
+    http: WinHttpApis,
+    session: HINTERNET,
+    connect: HINTERNET,
+    request: HINTERNET,
 
+    fn deinit(self: *const HttpHandles) void {
+        _ = self.http.WinHttpCloseHandle(self.request);
+        _ = self.http.WinHttpCloseHandle(self.connect);
+        _ = self.http.WinHttpCloseHandle(self.session);
+    }
+};
+
+fn sendGetRequest(
+    host_w: c.LPCWSTR,
+    path_w: c.LPCWSTR,
+    headers_w: ?c.LPCWSTR,
+    resolve_ms: c_int,
+    connect_ms: c_int,
+    send_ms: c_int,
+    receive_ms: c_int,
+) !HttpHandles {
+    const http = loadWinHttp() orelse return error.WinHttpLoadFailed;
     const session = http.WinHttpOpen(
-        L("Ghostty-Windows-Updater/1.0"),
+        L("Anitty-Updater/1.0"),
         WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
         null,
         null,
         0,
     ) orelse return error.WinHttpOpenFailed;
-    defer _ = http.WinHttpCloseHandle(session);
+    errdefer _ = http.WinHttpCloseHandle(session);
 
-    _ = http.WinHttpSetTimeouts(session, 5000, 5000, 5000, 10000);
+    _ = http.WinHttpSetTimeouts(session, resolve_ms, connect_ms, send_ms, receive_ms);
 
     const connect = http.WinHttpConnect(
         session,
-        api_host,
+        host_w,
         INTERNET_DEFAULT_HTTPS_PORT,
         0,
     ) orelse return error.WinHttpConnectFailed;
-    defer _ = http.WinHttpCloseHandle(connect);
+    errdefer _ = http.WinHttpCloseHandle(connect);
 
     const request = http.WinHttpOpenRequest(
         connect,
         L("GET"),
-        api_path,
+        path_w,
         null,
         null,
         null,
         WINHTTP_FLAG_SECURE,
     ) orelse return error.WinHttpOpenRequestFailed;
-    defer _ = http.WinHttpCloseHandle(request);
+    errdefer _ = http.WinHttpCloseHandle(request);
 
     if (!http.WinHttpSendRequest(
         request,
-        api_headers,
-        std.math.maxInt(c.DWORD),
+        headers_w,
+        if (headers_w != null) std.math.maxInt(c.DWORD) else 0,
         null,
         0,
         0,
@@ -416,21 +426,32 @@ fn fetchLatestRelease(alloc: Allocator) !ReleaseInfo {
         return error.HttpStatusNotOk;
     }
 
-    var body: std.ArrayList(u8) = .empty;
-    defer body.deinit(alloc);
+    return .{ .http = http, .session = session, .connect = connect, .request = request };
+}
 
-    var buf: [4096]u8 = undefined;
+fn readResponseBytes(alloc: Allocator, handles: HttpHandles, max_bytes: usize) ![]u8 {
+    var body: std.ArrayList(u8) = .empty;
+    errdefer body.deinit(alloc);
+
+    var buf: [8192]u8 = undefined;
     while (true) {
         var read_bytes: c.DWORD = 0;
-        if (!http.WinHttpReadData(request, &buf, buf.len, &read_bytes).toBool()) {
+        if (!handles.http.WinHttpReadData(handles.request, &buf, buf.len, &read_bytes).toBool()) {
             return error.WinHttpReadDataFailed;
         }
         if (read_bytes == 0) break;
-        if (body.items.len + read_bytes > 512 * 1024) return error.ResponseTooLarge;
+        if (body.items.len + read_bytes > max_bytes) return error.ResponseTooLarge;
         try body.appendSlice(alloc, buf[0..read_bytes]);
     }
+    return try body.toOwnedSlice(alloc);
+}
 
-    return try parseReleaseJson(alloc, body.items);
+fn fetchLatestRelease(alloc: Allocator) !ReleaseInfo {
+    const handles = try sendGetRequest(api_host, api_path, api_headers, 5000, 5000, 5000, 10000);
+    defer handles.deinit();
+    const body = try readResponseBytes(alloc, handles, 512 * 1024);
+    defer alloc.free(body);
+    return try parseReleaseJson(alloc, body);
 }
 
 pub fn isSafeHttpsUrl(url: []const u8) bool {
@@ -443,7 +464,7 @@ pub fn isSafeHttpsUrl(url: []const u8) bool {
 
 pub fn isAllowedReleaseAssetUrl(url: []const u8) bool {
     if (!isSafeHttpsUrl(url)) return false;
-    return std.mem.startsWith(u8, url, "https://github.com/RecursiveFunctions/ghostty-windows/releases/download/") or
+    return std.mem.startsWith(u8, url, "https://github.com/RecursiveFunctions/anitty/releases/download/") or
         std.mem.startsWith(u8, url, "https://objects.githubusercontent.com/") or
         std.mem.startsWith(u8, url, "https://release-assets.githubusercontent.com/");
 }
@@ -539,23 +560,11 @@ pub fn handleResult(app: *App, lparam: c.LPARAM) void {
     const owner: ?c.HWND = if (app.activeWindow()) |w| w.hwnd else null;
 
     const tag = result.tag_name orelse {
-        const main_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Unable to Check for Updates"))) catch return;
-        defer alloc.free(main_w);
-        const content_w = std.unicode.utf8ToUtf16LeAllocZ(
-            alloc,
-            std.mem.span(i18n._("Could not reach GitHub Releases. Would you like to open the releases page in your browser?")),
-        ) catch return;
-        defer alloc.free(content_w);
-        const yes_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Open Releases Page"))) catch return;
-        defer alloc.free(yes_w);
-        const no_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Cancel"))) catch return;
-        defer alloc.free(no_w);
-
-        if (dialogs.confirm(owner, .{
-            .main = main_w,
-            .content = content_w,
-            .yes = yes_w,
-            .no = no_w,
+        if (dialogs.confirmUtf8(alloc, owner, .{
+            .main = std.mem.span(i18n._("Unable to Check for Updates")),
+            .content = std.mem.span(i18n._("Could not reach GitHub Releases. Would you like to open the releases page in your browser?")),
+            .yes = std.mem.span(i18n._("Open Releases Page")),
+            .no = std.mem.span(i18n._("Cancel")),
             .icon = .information,
         })) {
             internal_os.open(.html, releases_page_url) catch {};
@@ -567,15 +576,11 @@ pub fn handleResult(app: *App, lparam: c.LPARAM) void {
     if (!isNewerVersion(build_config.version_string, tag)) {
         const msg = std.fmt.allocPrint(
             alloc,
-            "You are running Ghostty {s} (latest release: {s}).",
+            "You are running Anitty {s} (latest release: {s}).",
             .{ build_config.version_string, tag },
         ) catch return;
         defer alloc.free(msg);
-        const content_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, msg) catch return;
-        defer alloc.free(content_w);
-        const main_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Ghostty is Up to Date"))) catch return;
-        defer alloc.free(main_w);
-        dialogs.info(owner, L("Ghostty"), main_w, content_w);
+        dialogs.infoUtf8(alloc, owner, "Anitty", std.mem.span(i18n._("Anitty is Up to Date")), msg);
         return;
     }
 
@@ -599,24 +604,16 @@ pub fn handleResult(app: *App, lparam: c.LPARAM) void {
         };
         const msg = std.fmt.allocPrint(
             alloc,
-            "Ghostty {s} is available (current version: {s}).\n\nWould you like to automatically download, verify (SHA-256), and install the {s} update now?",
+            "Anitty {s} is available (current version: {s}).\n\nWould you like to automatically download, verify (SHA-256), and install the {s} update now?",
             .{ tag, build_config.version_string, mode_desc },
         ) catch return;
         defer alloc.free(msg);
-        const content_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, msg) catch return;
-        defer alloc.free(content_w);
-        const main_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Update Available"))) catch return;
-        defer alloc.free(main_w);
-        const yes_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Install & Restart"))) catch return;
-        defer alloc.free(yes_w);
-        const no_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Later"))) catch return;
-        defer alloc.free(no_w);
 
-        if (dialogs.confirm(owner, .{
-            .main = main_w,
-            .content = content_w,
-            .yes = yes_w,
-            .no = no_w,
+        if (dialogs.confirmUtf8(alloc, owner, .{
+            .main = std.mem.span(i18n._("Update Available")),
+            .content = msg,
+            .yes = std.mem.span(i18n._("Install & Restart")),
+            .no = std.mem.span(i18n._("Later")),
             .icon = .information,
         })) {
             if (!startDownloadAndApply(
@@ -635,24 +632,16 @@ pub fn handleResult(app: *App, lparam: c.LPARAM) void {
 
     const msg = std.fmt.allocPrint(
         alloc,
-        "Ghostty {s} is available (current version: {s}).\n\nWould you like to open the release page to download it?",
+        "Anitty {s} is available (current version: {s}).\n\nWould you like to open the release page to download it?",
         .{ tag, build_config.version_string },
     ) catch return;
     defer alloc.free(msg);
-    const content_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, msg) catch return;
-    defer alloc.free(content_w);
-    const main_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Update Available"))) catch return;
-    defer alloc.free(main_w);
-    const yes_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Download Update"))) catch return;
-    defer alloc.free(yes_w);
-    const no_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Later"))) catch return;
-    defer alloc.free(no_w);
 
-    if (dialogs.confirm(owner, .{
-        .main = main_w,
-        .content = content_w,
-        .yes = yes_w,
-        .no = no_w,
+    if (dialogs.confirmUtf8(alloc, owner, .{
+        .main = std.mem.span(i18n._("Update Available")),
+        .content = msg,
+        .yes = std.mem.span(i18n._("Download Update")),
+        .no = std.mem.span(i18n._("Later")),
         .icon = .information,
     })) {
         internal_os.open(.html, url) catch {};
@@ -771,12 +760,12 @@ fn performDownloadAndVerify(job: *DownloadJob, apply: *ApplyResult) !void {
 
     const tick = c.GetTickCount64();
     const trimmed_base = std.mem.trimEnd(u8, temp_base_utf8, "\\/");
-    const temp_dir_utf8 = try std.fmt.allocPrint(alloc, "{s}\\ghostty-update-{d}", .{ trimmed_base, tick });
+    const temp_dir_utf8 = try std.fmt.allocPrint(alloc, "{s}\\anitty-update-{d}", .{ trimmed_base, tick });
     defer alloc.free(temp_dir_utf8);
 
     const temp_dir_w = try std.unicode.utf8ToUtf16LeAllocZ(alloc, temp_dir_utf8);
     apply.temp_dir_w = temp_dir_w;
-    _ = CreateDirectoryW(temp_dir_w, null);
+    _ = c.CreateDirectoryW(temp_dir_w, null);
 
     const dest_file_utf8 = try std.fmt.allocPrint(alloc, "{s}\\{s}", .{ temp_dir_utf8, job.asset_name });
     defer alloc.free(dest_file_utf8);
@@ -785,7 +774,7 @@ fn performDownloadAndVerify(job: *DownloadJob, apply: *ApplyResult) !void {
 
     const actual_sha256 = try downloadUrlToFile(alloc, job.asset_url, dest_file_w, 256 * 1024 * 1024);
     if (!std.mem.eql(u8, &actual_sha256, &expected_sha256)) {
-        _ = DeleteFileW(dest_file_w);
+        _ = c.DeleteFileW(dest_file_w);
         return error.Sha256Mismatch;
     }
 
@@ -800,9 +789,9 @@ fn performDownloadAndVerify(job: *DownloadJob, apply: *ApplyResult) !void {
 
             try extractZipArchive(alloc, dest_file_utf8, extract_dir_utf8);
 
-            const staged_root_utf8 = try std.fmt.allocPrint(alloc, "{s}\\ghostty", .{extract_dir_utf8});
+            const staged_root_utf8 = try std.fmt.allocPrint(alloc, "{s}\\anitty", .{extract_dir_utf8});
             defer alloc.free(staged_root_utf8);
-            const staged_exe_utf8 = try std.fmt.allocPrint(alloc, "{s}\\bin\\ghostty.exe", .{staged_root_utf8});
+            const staged_exe_utf8 = try std.fmt.allocPrint(alloc, "{s}\\bin\\anitty.exe", .{staged_root_utf8});
             defer alloc.free(staged_exe_utf8);
             const staged_exe_w = try std.unicode.utf8ToUtf16LeAllocZ(alloc, staged_exe_utf8);
             defer alloc.free(staged_exe_w);
@@ -822,85 +811,14 @@ fn performDownloadAndVerify(job: *DownloadJob, apply: *ApplyResult) !void {
 fn downloadUrlBytes(alloc: Allocator, url: []const u8, max_bytes: usize) ![]u8 {
     if (!isAllowedReleaseAssetUrl(url)) return error.DisallowedAssetUrl;
     const parsed_url = try parseHttpsUrl(url);
-    const http = loadWinHttp() orelse return error.WinHttpLoadFailed;
-
     const host_w = try std.unicode.utf8ToUtf16LeAllocZ(alloc, parsed_url.host);
     defer alloc.free(host_w);
     const path_w = try std.unicode.utf8ToUtf16LeAllocZ(alloc, parsed_url.path);
     defer alloc.free(path_w);
 
-    const session = http.WinHttpOpen(
-        L("Ghostty-Windows-Updater/1.0"),
-        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-        null,
-        null,
-        0,
-    ) orelse return error.WinHttpOpenFailed;
-    defer _ = http.WinHttpCloseHandle(session);
-
-    _ = http.WinHttpSetTimeouts(session, 10000, 15000, 15000, 30000);
-
-    const connect = http.WinHttpConnect(
-        session,
-        host_w,
-        INTERNET_DEFAULT_HTTPS_PORT,
-        0,
-    ) orelse return error.WinHttpConnectFailed;
-    defer _ = http.WinHttpCloseHandle(connect);
-
-    const request = http.WinHttpOpenRequest(
-        connect,
-        L("GET"),
-        path_w,
-        null,
-        null,
-        null,
-        WINHTTP_FLAG_SECURE,
-    ) orelse return error.WinHttpOpenRequestFailed;
-    defer _ = http.WinHttpCloseHandle(request);
-
-    if (!http.WinHttpSendRequest(
-        request,
-        null,
-        0,
-        null,
-        0,
-        0,
-        0,
-    ).toBool()) return error.WinHttpSendRequestFailed;
-
-    if (!http.WinHttpReceiveResponse(request, null).toBool()) {
-        return error.WinHttpReceiveResponseFailed;
-    }
-
-    var status_code: c.DWORD = 0;
-    var status_size: c.DWORD = @sizeOf(c.DWORD);
-    if (!http.WinHttpQueryHeaders(
-        request,
-        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        null,
-        &status_code,
-        &status_size,
-        null,
-    ).toBool() or status_code != 200) {
-        return error.HttpStatusNotOk;
-    }
-
-    var body: std.ArrayList(u8) = .empty;
-    errdefer body.deinit(alloc);
-
-    var buf: [8192]u8 = undefined;
-    while (true) {
-        var read_bytes: c.DWORD = 0;
-        if (!http.WinHttpReadData(request, &buf, buf.len, &read_bytes).toBool()) {
-            return error.WinHttpReadDataFailed;
-        }
-        if (read_bytes == 0) break;
-        if (body.items.len + read_bytes > max_bytes) return error.ResponseTooLarge;
-        try body.appendSlice(alloc, buf[0..read_bytes]);
-    }
-
-    return try body.toOwnedSlice(alloc);
+    const handles = try sendGetRequest(host_w, path_w, null, 10000, 15000, 15000, 30000);
+    defer handles.deinit();
+    return try readResponseBytes(alloc, handles, max_bytes);
 }
 
 fn downloadUrlToFile(
@@ -911,69 +829,13 @@ fn downloadUrlToFile(
 ) ![32]u8 {
     if (!isAllowedReleaseAssetUrl(url)) return error.DisallowedAssetUrl;
     const parsed_url = try parseHttpsUrl(url);
-    const http = loadWinHttp() orelse return error.WinHttpLoadFailed;
-
     const host_w = try std.unicode.utf8ToUtf16LeAllocZ(alloc, parsed_url.host);
     defer alloc.free(host_w);
     const path_w = try std.unicode.utf8ToUtf16LeAllocZ(alloc, parsed_url.path);
     defer alloc.free(path_w);
 
-    const session = http.WinHttpOpen(
-        L("Ghostty-Windows-Updater/1.0"),
-        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-        null,
-        null,
-        0,
-    ) orelse return error.WinHttpOpenFailed;
-    defer _ = http.WinHttpCloseHandle(session);
-
-    _ = http.WinHttpSetTimeouts(session, 10000, 15000, 15000, 60000);
-
-    const connect = http.WinHttpConnect(
-        session,
-        host_w,
-        INTERNET_DEFAULT_HTTPS_PORT,
-        0,
-    ) orelse return error.WinHttpConnectFailed;
-    defer _ = http.WinHttpCloseHandle(connect);
-
-    const request = http.WinHttpOpenRequest(
-        connect,
-        L("GET"),
-        path_w,
-        null,
-        null,
-        null,
-        WINHTTP_FLAG_SECURE,
-    ) orelse return error.WinHttpOpenRequestFailed;
-    defer _ = http.WinHttpCloseHandle(request);
-
-    if (!http.WinHttpSendRequest(
-        request,
-        null,
-        0,
-        null,
-        0,
-        0,
-        0,
-    ).toBool()) return error.WinHttpSendRequestFailed;
-
-    if (!http.WinHttpReceiveResponse(request, null).toBool()) {
-        return error.WinHttpReceiveResponseFailed;
-    }
-
-    var status_code: c.DWORD = 0;
-    var status_size: c.DWORD = @sizeOf(c.DWORD);
-    if (!http.WinHttpQueryHeaders(
-        request,
-        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        null,
-        &status_code,
-        &status_size,
-        null,
-    ).toBool() or status_code != 200) {
-        return error.HttpStatusNotOk;
-    }
+    const handles = try sendGetRequest(host_w, path_w, null, 10000, 15000, 15000, 60000);
+    defer handles.deinit();
 
     const file_handle = windows.exp.kernel32.CreateFileW(
         dest_path_w,
@@ -994,7 +856,7 @@ fn downloadUrlToFile(
             _ = windows.exp.kernel32.CloseHandle(file_handle);
             file_closed = true;
         }
-        _ = DeleteFileW(dest_path_w);
+        _ = c.DeleteFileW(dest_path_w);
     }
 
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
@@ -1002,7 +864,7 @@ fn downloadUrlToFile(
     var buf: [32 * 1024]u8 = undefined;
     while (true) {
         var read_bytes: c.DWORD = 0;
-        if (!http.WinHttpReadData(request, &buf, buf.len, &read_bytes).toBool()) {
+        if (!handles.http.WinHttpReadData(handles.request, &buf, buf.len, &read_bytes).toBool()) {
             return error.WinHttpReadDataFailed;
         }
         if (read_bytes == 0) break;
@@ -1056,7 +918,7 @@ fn extractZipArchive(alloc: Allocator, zip_path_utf8: []const u8, dest_dir_utf8:
         null,
         null,
         windows.FALSE,
-        CREATE_NO_WINDOW,
+        c.CREATE_NO_WINDOW,
         null,
         null,
         &si,
@@ -1095,17 +957,7 @@ pub fn handleApply(app: *App, lparam: c.LPARAM) void {
     };
 
     if (applied) {
-        @import("SessionState.zig").save(app, true);
-        app.quitting = true;
-        app.disarmQuitTimer();
-        app.drainPendingOpenUrls();
-        app.undo_history.deinit(app);
-        if (app.selection_clipboard) |sel| {
-            app.core_app.alloc.free(sel);
-            app.selection_clipboard = null;
-        }
-        app.destroyAllWindows();
-        c.PostQuitMessage(0);
+        app.quitForUpgrade();
     } else {
         promptOpenReleaseOnFailure(alloc, owner, apply.html_url, "Failed to launch installer");
     }
@@ -1125,20 +977,11 @@ fn promptOpenReleaseOnFailure(
     ) catch return;
     defer alloc.free(msg);
 
-    const main_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Update Failed"))) catch return;
-    defer alloc.free(main_w);
-    const content_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, msg) catch return;
-    defer alloc.free(content_w);
-    const yes_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Open Releases Page"))) catch return;
-    defer alloc.free(yes_w);
-    const no_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(i18n._("Cancel"))) catch return;
-    defer alloc.free(no_w);
-
-    if (dialogs.confirm(owner, .{
-        .main = main_w,
-        .content = content_w,
-        .yes = yes_w,
-        .no = no_w,
+    if (dialogs.confirmUtf8(alloc, owner, .{
+        .main = std.mem.span(i18n._("Update Failed")),
+        .content = msg,
+        .yes = std.mem.span(i18n._("Open Releases Page")),
+        .no = std.mem.span(i18n._("Cancel")),
         .icon = .warning,
     })) {
         internal_os.open(.html, html_url) catch {};
@@ -1208,14 +1051,14 @@ fn launchPortableUpgrade(
     const ps_path = systemPowerShellPath(alloc) catch return false;
     defer alloc.free(ps_path);
 
-    const exe_utf8 = std.unicode.utf16LeToUtf8Alloc(alloc, exe_slice) catch return false;
-    defer alloc.free(exe_utf8);
     const root_utf8 = std.unicode.utf16LeToUtf8Alloc(alloc, root_dir_w) catch return false;
     defer alloc.free(root_utf8);
+    const new_exe_utf8 = std.fmt.allocPrint(alloc, "{s}\\bin\\anitty.exe", .{root_utf8}) catch return false;
+    defer alloc.free(new_exe_utf8);
     const staged_utf8 = std.unicode.utf16LeToUtf8Alloc(alloc, staged_root_w) catch return false;
     defer alloc.free(staged_utf8);
 
-    const escaped_exe = escapePowerShellSingleQuoted(alloc, exe_utf8) catch return false;
+    const escaped_exe = escapePowerShellSingleQuoted(alloc, new_exe_utf8) catch return false;
     defer alloc.free(escaped_exe);
     const escaped_root = escapePowerShellSingleQuoted(alloc, root_utf8) catch return false;
     defer alloc.free(escaped_root);
@@ -1254,7 +1097,7 @@ fn launchPortableUpgrade(
     si.cb = @sizeOf(windows.STARTUPINFOW);
     var pi: windows.PROCESS_INFORMATION = undefined;
 
-    const renamed = MoveFileExW(@ptrCast(&exe_buf), @ptrCast(&old_exe_buf), MOVEFILE_REPLACE_EXISTING).toBool();
+    const renamed = c.MoveFileExW(@ptrCast(&exe_buf), @ptrCast(&old_exe_buf), c.MOVEFILE_REPLACE_EXISTING).toBool();
 
     if (!windows.exp.kernel32.CreateProcessW(
         ps_path.ptr,
@@ -1262,14 +1105,14 @@ fn launchPortableUpgrade(
         null,
         null,
         windows.FALSE,
-        CREATE_NO_WINDOW,
+        c.CREATE_NO_WINDOW,
         null,
         null,
         &si,
         &pi,
     ).toBool()) {
         if (renamed) {
-            _ = MoveFileExW(@ptrCast(&old_exe_buf), @ptrCast(&exe_buf), MOVEFILE_REPLACE_EXISTING);
+            _ = c.MoveFileExW(@ptrCast(&old_exe_buf), @ptrCast(&exe_buf), c.MOVEFILE_REPLACE_EXISTING);
         }
         log.warn("failed to launch portable upgrade helper process", .{});
         return false;
@@ -1344,31 +1187,31 @@ test "updater: isNewerVersion" {
     try testing.expect(!isNewerVersion("1.4.1-windows.1234567", "windows-v1.4.1-windows.1234567"));
     try testing.expect(!isNewerVersion("1.3.1", "v1.3.1"));
     try testing.expect(!isNewerVersion("1.3.2-dev+abcdef", "v1.3.1"));
-    try testing.expect(isSafeHttpsUrl("https://github.com/RecursiveFunctions/ghostty-windows/releases/tag/v1.4.1"));
+    try testing.expect(isSafeHttpsUrl("https://github.com/RecursiveFunctions/anitty/releases/tag/v1.4.1"));
     try testing.expect(!isSafeHttpsUrl("file:///C:/Windows/System32/calc.exe"));
 }
 
 test "updater: URL validation and parsing" {
     const testing = std.testing;
     try testing.expect(isAllowedReleaseAssetUrl(
-        "https://github.com/RecursiveFunctions/ghostty-windows/releases/download/windows-v1.4.1/Ghostty-Windows-Setup-x64.exe",
+        "https://github.com/RecursiveFunctions/anitty/releases/download/windows-v1.4.1/Anitty-Windows-Setup-x64.exe",
     ));
     try testing.expect(isAllowedReleaseAssetUrl(
-        "https://objects.githubusercontent.com/github-production-release-asset-2e65be/12345/Ghostty-Windows-x64.zip",
+        "https://objects.githubusercontent.com/github-production-release-asset-2e65be/12345/Anitty-Windows-x64.zip",
     ));
     try testing.expect(!isAllowedReleaseAssetUrl(
-        "https://evil.example.com/Ghostty-Windows-Setup-x64.exe",
+        "https://evil.example.com/Anitty-Windows-Setup-x64.exe",
     ));
     try testing.expect(!isAllowedReleaseAssetUrl(
-        "http://github.com/RecursiveFunctions/ghostty-windows/releases/download/windows-v1.4.1/Ghostty-Windows-Setup-x64.exe",
+        "http://github.com/RecursiveFunctions/anitty/releases/download/windows-v1.4.1/Anitty-Windows-Setup-x64.exe",
     ));
 
     const parsed = try parseHttpsUrl(
-        "https://github.com/RecursiveFunctions/ghostty-windows/releases/download/windows-v1.4.1/SHA256SUMS.txt",
+        "https://github.com/RecursiveFunctions/anitty/releases/download/windows-v1.4.1/SHA256SUMS.txt",
     );
     try testing.expectEqualStrings("github.com", parsed.host);
     try testing.expectEqualStrings(
-        "/RecursiveFunctions/ghostty-windows/releases/download/windows-v1.4.1/SHA256SUMS.txt",
+        "/RecursiveFunctions/anitty/releases/download/windows-v1.4.1/SHA256SUMS.txt",
         parsed.path,
     );
 }
@@ -1380,19 +1223,19 @@ test "updater: parseReleaseJson and parseSha256Sums" {
     const sample_json =
         \\{
         \\  "tag_name": "windows-v1.4.1-windows.2",
-        \\  "html_url": "https://github.com/RecursiveFunctions/ghostty-windows/releases/tag/windows-v1.4.1-windows.2",
+        \\  "html_url": "https://github.com/RecursiveFunctions/anitty/releases/tag/windows-v1.4.1-windows.2",
         \\  "assets": [
         \\    {
-        \\      "name": "Ghostty-Windows-Setup-x64.exe",
-        \\      "browser_download_url": "https://github.com/RecursiveFunctions/ghostty-windows/releases/download/windows-v1.4.1-windows.2/Ghostty-Windows-Setup-x64.exe"
+        \\      "name": "Anitty-Windows-Setup-x64.exe",
+        \\      "browser_download_url": "https://github.com/RecursiveFunctions/anitty/releases/download/windows-v1.4.1-windows.2/Anitty-Windows-Setup-x64.exe"
         \\    },
         \\    {
-        \\      "name": "Ghostty-Windows-x64.zip",
-        \\      "browser_download_url": "https://github.com/RecursiveFunctions/ghostty-windows/releases/download/windows-v1.4.1-windows.2/Ghostty-Windows-x64.zip"
+        \\      "name": "Anitty-Windows-x64.zip",
+        \\      "browser_download_url": "https://github.com/RecursiveFunctions/anitty/releases/download/windows-v1.4.1-windows.2/Anitty-Windows-x64.zip"
         \\    },
         \\    {
         \\      "name": "SHA256SUMS.txt",
-        \\      "browser_download_url": "https://github.com/RecursiveFunctions/ghostty-windows/releases/download/windows-v1.4.1-windows.2/SHA256SUMS.txt"
+        \\      "browser_download_url": "https://github.com/RecursiveFunctions/anitty/releases/download/windows-v1.4.1-windows.2/SHA256SUMS.txt"
         \\    }
         \\  ]
         \\}
@@ -1412,7 +1255,7 @@ test "updater: parseReleaseJson and parseSha256Sums" {
 
     const sums_content = try std.fmt.allocPrint(
         alloc,
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  Ghostty-Windows-x64.zip\r\n{s}  Ghostty-Windows-Setup-x64.exe\r\n",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  Anitty-Windows-x64.zip\r\n{s}  Anitty-Windows-Setup-x64.exe\r\n",
         .{hex_setup},
     );
     defer alloc.free(sums_content);

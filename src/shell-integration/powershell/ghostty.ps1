@@ -177,7 +177,12 @@ function global:prompt {
 
 if ((__Ghostty-HasFeature 'ssh-env') -or (__Ghostty-HasFeature 'ssh-terminfo')) {
     function global:ssh {
-        $ghosttyExe = if ($env:GHOSTTY_BIN_DIR) { Join-Path $env:GHOSTTY_BIN_DIR 'ghostty.exe' } else { 'ghostty.exe' }
+        $ghosttyExe = if ($env:GHOSTTY_BIN_DIR) {
+            $anittyCandidate = Join-Path $env:GHOSTTY_BIN_DIR 'anitty.exe'
+            if (Test-Path -LiteralPath $anittyCandidate) { $anittyCandidate } else { Join-Path $env:GHOSTTY_BIN_DIR 'ghostty.exe' }
+        } else {
+            'anitty.exe'
+        }
         $flags = @()
         if (-not (__Ghostty-HasFeature 'ssh-env')) { $flags += '--forward-env=false' }
         if (-not (__Ghostty-HasFeature 'ssh-terminfo')) { $flags += '--terminfo=false' }

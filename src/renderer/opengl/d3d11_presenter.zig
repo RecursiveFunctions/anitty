@@ -9,7 +9,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const windows = std.os.windows;
+const windows = @import("../../os/windows.zig");
 
 const log = std.log.scoped(.d3d11_presenter);
 
@@ -17,16 +17,10 @@ pub const HRESULT = c_long;
 pub const UINT = u32;
 pub const DWORD = u32;
 pub const BOOL = windows.BOOL;
-pub const HWND = windows.HWND;
+pub const HWND = std.os.windows.HWND;
 pub const HANDLE = windows.HANDLE;
 pub const HMODULE = windows.HMODULE;
-
-pub const GUID = extern struct {
-    Data1: u32,
-    Data2: u16,
-    Data3: u16,
-    Data4: [8]u8,
-};
+pub const GUID = windows.GUID;
 
 pub const IID_IDXGIDevice = GUID{
     .Data1 = 0x54ec77fa,
@@ -318,12 +312,6 @@ const D3D11CreateDeviceFn = *const fn (
     ppImmediateContext: *?*ID3D11DeviceContext,
 ) callconv(.winapi) HRESULT;
 
-extern "kernel32" fn LoadLibraryExW(name: [*:0]const u16, hFile: ?*anyopaque, flags: u32) callconv(.winapi) ?HMODULE;
-extern "kernel32" fn GetProcAddress(module: HMODULE, name: [*:0]const u8) callconv(.winapi) ?*const anyopaque;
-extern "kernel32" fn GetEnvironmentVariableW(name: [*:0]const u16, buf: ?[*]u16, size: DWORD) callconv(.winapi) DWORD;
-
-const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x00000800;
-
 pub const DriverMode = enum {
     disabled,
     hardware,
@@ -333,7 +321,7 @@ pub const DriverMode = enum {
 pub fn requestedMode() DriverMode {
     if (comptime builtin.os.tag != .windows) return .disabled;
     var buf: [32]u16 = undefined;
-    const n = GetEnvironmentVariableW(
+    const n = windows.exp.kernel32.GetEnvironmentVariableW(
         std.unicode.utf8ToUtf16LeStringLiteral("GHOSTTY_WIN32_PRESENTER"),
         &buf,
         buf.len,
@@ -357,12 +345,12 @@ pub const Presenter = struct {
     staging: []u8 = &.{},
 
     pub fn init(hwnd: HWND, force_warp: bool) !Presenter {
-        const d3d_mod = LoadLibraryExW(
+        const d3d_mod = windows.exp.kernel32.LoadLibraryExW(
             std.unicode.utf8ToUtf16LeStringLiteral("d3d11.dll"),
             null,
-            LOAD_LIBRARY_SEARCH_SYSTEM32,
+            windows.LOAD_LIBRARY_SEARCH_SYSTEM32,
         ) orelse return error.D3D11Unavailable;
-        const create_fn_ptr = GetProcAddress(d3d_mod, "D3D11CreateDevice") orelse
+        const create_fn_ptr = windows.exp.kernel32.GetProcAddress(d3d_mod, "D3D11CreateDevice") orelse
             return error.D3D11Unavailable;
         const createDevice: D3D11CreateDeviceFn = @ptrCast(create_fn_ptr);
 
@@ -509,9 +497,9 @@ pub const Presenter = struct {
         var y: u32 = 0;
         const half = height / 2;
         while (y < half) : (y += 1) {
-            const top_row = self.staging[y * row_pitch ..][0..row_pitch];
-            const bot_row = self.staging[(height - 1 - y) * row_pitch ..][0..row_pitch];
-            for (top_row, bot_row) |*a, *b| std.mem.swap(u8, a, b);
+            const top_row = std.mem.bytesAsSlice([4]u8, self.staging[y * row_pitch ..][0..row_pitch]);
+            const bot_row = std.mem.bytesAsSlice([4]u8, self.staging[(height - 1 - y) * row_pitch ..][0..row_pitch]);
+            for (top_row, bot_row) |*a, *b| std.mem.swap([4]u8, a, b);
         }
 
         var back_buffer_raw: ?*anyopaque = null;

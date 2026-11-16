@@ -5,14 +5,7 @@ const c = @import("c.zig");
 const log = std.log.scoped(.win32_toast);
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
-const aumid = L("com.mitchellh.ghostty");
-
-const GUID = extern struct {
-    data1: u32,
-    data2: u16,
-    data3: u16,
-    data4: [8]u8,
-};
+const aumid = L(@import("../../build_config.zig").bundle_id);
 
 const HSTRING = *opaque {};
 
@@ -37,11 +30,6 @@ const FastHString = struct {
     }
 };
 
-const LOAD_LIBRARY_SEARCH_SYSTEM32: c.DWORD = 0x00000800;
-
-extern "kernel32" fn LoadLibraryExW(name: c.LPCWSTR, hFile: ?*anyopaque, dwFlags: c.DWORD) callconv(.winapi) ?c.HINSTANCE;
-extern "kernel32" fn GetProcAddress(module: c.HINSTANCE, name: [*:0]const u8) callconv(.winapi) ?*const anyopaque;
-
 const WindowsCreateStringReferenceFn = *const fn (
     sourceString: c.LPCWSTR,
     length: u32,
@@ -56,7 +44,7 @@ const RoActivateInstanceFn = *const fn (
 
 const RoGetActivationFactoryFn = *const fn (
     activatableClassId: ?HSTRING,
-    iid: *const GUID,
+    iid: *const c.GUID,
     factory: *?*anyopaque,
 ) callconv(.winapi) c.HRESULT;
 
@@ -72,10 +60,10 @@ var combase_loaded: bool = false;
 fn getCombaseApis() ?CombaseApis {
     if (combase_loaded) return combase_apis;
     combase_loaded = true;
-    const mod = LoadLibraryExW(L("combase.dll"), null, LOAD_LIBRARY_SEARCH_SYSTEM32) orelse return null;
-    const wcsr = GetProcAddress(mod, "WindowsCreateStringReference") orelse return null;
-    const rai = GetProcAddress(mod, "RoActivateInstance") orelse return null;
-    const rgaf = GetProcAddress(mod, "RoGetActivationFactory") orelse return null;
+    const mod = c.LoadLibraryExW(L("combase.dll"), null, c.LOAD_LIBRARY_SEARCH_SYSTEM32) orelse return null;
+    const wcsr = c.GetProcAddress(mod, "WindowsCreateStringReference") orelse return null;
+    const rai = c.GetProcAddress(mod, "RoActivateInstance") orelse return null;
+    const rgaf = c.GetProcAddress(mod, "RoGetActivationFactory") orelse return null;
     combase_apis = .{
         .WindowsCreateStringReference = @ptrCast(wcsr),
         .RoActivateInstance = @ptrCast(rai),
@@ -84,39 +72,39 @@ fn getCombaseApis() ?CombaseApis {
     return combase_apis;
 }
 
-const IID_IXmlDocument: GUID = .{
-    .data1 = 0xF7F3A506,
-    .data2 = 0x1E87,
-    .data3 = 0x42D6,
-    .data4 = .{ 0xBC, 0xFB, 0xB8, 0xC8, 0x09, 0xFA, 0x54, 0x94 },
+const IID_IXmlDocument: c.GUID = .{
+    .Data1 = 0xF7F3A506,
+    .Data2 = 0x1E87,
+    .Data3 = 0x42D6,
+    .Data4 = .{ 0xBC, 0xFB, 0xB8, 0xC8, 0x09, 0xFA, 0x54, 0x94 },
 };
 
-const IID_IXmlDocumentIO: GUID = .{
-    .data1 = 0x6CD0E74E,
-    .data2 = 0xEE65,
-    .data3 = 0x4489,
-    .data4 = .{ 0x9E, 0xBF, 0xCA, 0x43, 0xE8, 0x7B, 0xA6, 0x37 },
+const IID_IXmlDocumentIO: c.GUID = .{
+    .Data1 = 0x6CD0E74E,
+    .Data2 = 0xEE65,
+    .Data3 = 0x4489,
+    .Data4 = .{ 0x9E, 0xBF, 0xCA, 0x43, 0xE8, 0x7B, 0xA6, 0x37 },
 };
 
-const IID_IToastNotificationManagerStatics: GUID = .{
-    .data1 = 0x50AC103F,
-    .data2 = 0xD235,
-    .data3 = 0x4598,
-    .data4 = .{ 0xBB, 0xEF, 0x98, 0xFE, 0x4D, 0x1A, 0x3A, 0xD4 },
+const IID_IToastNotificationManagerStatics: c.GUID = .{
+    .Data1 = 0x50AC103F,
+    .Data2 = 0xD235,
+    .Data3 = 0x4598,
+    .Data4 = .{ 0xBB, 0xEF, 0x98, 0xFE, 0x4D, 0x1A, 0x3A, 0xD4 },
 };
 
-const IID_IToastNotificationFactory: GUID = .{
-    .data1 = 0x04124B20,
-    .data2 = 0x82C6,
-    .data3 = 0x4229,
-    .data4 = .{ 0xB1, 0x09, 0xFD, 0x9E, 0xD4, 0x66, 0x2B, 0x53 },
+const IID_IToastNotificationFactory: c.GUID = .{
+    .Data1 = 0x04124B20,
+    .Data2 = 0x82C6,
+    .Data3 = 0x4229,
+    .Data4 = .{ 0xB1, 0x09, 0xFD, 0x9E, 0xD4, 0x66, 0x2B, 0x53 },
 };
 
 const IInspectable = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*IInspectable, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*IInspectable, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*IInspectable) callconv(.winapi) u32,
         Release: *const fn (*IInspectable) callconv(.winapi) u32,
         GetIids: *const anyopaque,
@@ -133,7 +121,7 @@ const IXmlDocumentIO = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*IXmlDocumentIO, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*IXmlDocumentIO, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*IXmlDocumentIO) callconv(.winapi) u32,
         Release: *const fn (*IXmlDocumentIO) callconv(.winapi) u32,
         GetIids: *const anyopaque,
@@ -151,7 +139,7 @@ const IToastNotifier = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*IToastNotifier, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*IToastNotifier, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*IToastNotifier) callconv(.winapi) u32,
         Release: *const fn (*IToastNotifier) callconv(.winapi) u32,
         GetIids: *const anyopaque,
@@ -165,7 +153,7 @@ const IToastNotificationManagerStatics = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*IToastNotificationManagerStatics, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*IToastNotificationManagerStatics, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*IToastNotificationManagerStatics) callconv(.winapi) u32,
         Release: *const fn (*IToastNotificationManagerStatics) callconv(.winapi) u32,
         GetIids: *const anyopaque,
@@ -180,7 +168,7 @@ const IToastNotificationFactory = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*IToastNotificationFactory, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*IToastNotificationFactory, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*IToastNotificationFactory) callconv(.winapi) u32,
         Release: *const fn (*IToastNotificationFactory) callconv(.winapi) u32,
         GetIids: *const anyopaque,
@@ -261,7 +249,7 @@ pub fn buildToastXml(alloc: Allocator, title: []const u8, body: []const u8) ![]u
     const w = &out.writer;
 
     try w.writeAll("<toast><visual><binding template=\"ToastGeneric\"><text>");
-    try writeXmlEscaped(w, if (title.len > 0) title else "Ghostty");
+    try writeXmlEscaped(w, if (title.len > 0) title else "Anitty");
     try w.writeAll("</text>");
     if (body.len > 0) {
         try w.writeAll("<text>");

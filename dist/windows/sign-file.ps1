@@ -55,7 +55,7 @@ Write-Host "Using signtool: $signtool"
 
 if ($hasSignPath) {
     Write-Host "Signing '$FilePath' with SignPath ($($env:SIGNPATH_PROJECT_SLUG)/$($env:SIGNPATH_SIGNING_POLICY_SLUG))..."
-    $workDir = Join-Path $env:TEMP ("ghostty-signpath-" + [Guid]::NewGuid().ToString("N"))
+    $workDir = Join-Path $env:TEMP ("anitty-signpath-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force $workDir | Out-Null
     try {
         $fileName = Split-Path -Leaf $FilePath
@@ -120,7 +120,7 @@ if ($hasSignPath) {
     $workDir = if ($env:RUNNER_TEMP) {
         Join-Path $env:RUNNER_TEMP "trusted-signing"
     } else {
-        Join-Path $env:TEMP "ghostty-trusted-signing"
+        Join-Path $env:TEMP "anitty-trusted-signing"
     }
     New-Item -ItemType Directory -Force $workDir | Out-Null
 
@@ -167,7 +167,7 @@ if ($hasSignPath) {
     }
 } elseif ($hasPfxSigning) {
     Write-Host "Signing '$FilePath' with PFX certificate..."
-    $pfxPath = Join-Path $env:TEMP ("ghostty-sign-" + [Guid]::NewGuid().ToString("N") + ".pfx")
+    $pfxPath = Join-Path $env:TEMP ("anitty-sign-" + [Guid]::NewGuid().ToString("N") + ".pfx")
     try {
         $pfxBytes = [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64)
         [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)

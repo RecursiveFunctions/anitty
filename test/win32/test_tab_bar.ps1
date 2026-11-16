@@ -1,12 +1,12 @@
 param(
-    [string]$GhosttyExe = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'zig-out/bin/ghostty.exe')
+    [string]$GhosttyExe = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'zig-out/bin/anitty.exe')
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path -LiteralPath $GhosttyExe)) {
-    throw "ghostty.exe not found at $GhosttyExe"
+    throw "anitty.exe not found at $GhosttyExe"
 }
 
 Add-Type -TypeDefinition @"
@@ -155,32 +155,32 @@ try {
     Assert-Owned -Hwnd $winHwnd -ExpectedPid $expectedPid
     Start-Sleep -Milliseconds 500
 
-    $tabBars = [TabBarTestNative]::FindChildren($winHwnd, 'GhosttyTabBar', $expectedPid)
-    if ($tabBars.Count -ne 1) { throw "Expected 1 GhosttyTabBar child, found $($tabBars.Count)" }
+    $tabBars = [TabBarTestNative]::FindChildren($winHwnd, 'AnittyTabBar', $expectedPid)
+    if ($tabBars.Count -ne 1) { throw "Expected 1 AnittyTabBar child, found $($tabBars.Count)" }
     $tabBarHwnd = $tabBars[0]
 
-    $surfaces = [TabBarTestNative]::FindChildren($winHwnd, 'GhosttySurface', $expectedPid)
-    if ($surfaces.Count -lt 1) { throw 'Expected initial GhosttySurface child' }
+    $surfaces = [TabBarTestNative]::FindChildren($winHwnd, 'AnittySurface', $expectedPid)
+    if ($surfaces.Count -lt 1) { throw 'Expected initial AnittySurface child' }
 
-    Write-Host '[TEST] Creating second tab via F8 keybinding on GhosttySurface'
+    Write-Host '[TEST] Creating second tab via F8 keybinding on AnittySurface'
     $activeSurf = $surfaces | Where-Object { [TabBarTestNative]::IsWindowVisible($_) } | Select-Object -First 1
     Assert-Owned -Hwnd $activeSurf -ExpectedPid $expectedPid
     [void][TabBarTestNative]::PostMessageW($activeSurf, [TabBarTestNative]::WM_KEYDOWN, [UIntPtr]::new([TabBarTestNative]::VK_F8), [IntPtr]::Zero)
     [void][TabBarTestNative]::PostMessageW($activeSurf, [TabBarTestNative]::WM_KEYUP, [UIntPtr]::new([TabBarTestNative]::VK_F8), [IntPtr]::Zero)
     Start-Sleep -Milliseconds 600
 
-    $surfaces = [TabBarTestNative]::FindChildren($winHwnd, 'GhosttySurface', $expectedPid)
-    if ($surfaces.Count -ne 2) { throw "Expected 2 GhosttySurface children after F8, got $($surfaces.Count)" }
+    $surfaces = [TabBarTestNative]::FindChildren($winHwnd, 'AnittySurface', $expectedPid)
+    if ($surfaces.Count -ne 2) { throw "Expected 2 AnittySurface children after F8, got $($surfaces.Count)" }
 
-    Write-Host '[TEST] Creating third tab via + button on GhosttyTabBar'
+    Write-Host '[TEST] Creating third tab via + button on AnittyTabBar'
     $layout2 = Get-TabLayout -TabBarHwnd $tabBarHwnd -Count 2
     $plusX = ($layout2.TabWidth * 2) + [int]($layout2.Height / 2)
     $plusY = [int]($layout2.Height / 2)
     Click-ClientPoint -Hwnd $tabBarHwnd -Pid $expectedPid -X $plusX -Y $plusY
     Start-Sleep -Milliseconds 600
 
-    $surfaces = [TabBarTestNative]::FindChildren($winHwnd, 'GhosttySurface', $expectedPid)
-    if ($surfaces.Count -ne 3) { throw "Expected 3 GhosttySurface children after + click, got $($surfaces.Count)" }
+    $surfaces = [TabBarTestNative]::FindChildren($winHwnd, 'AnittySurface', $expectedPid)
+    if ($surfaces.Count -ne 3) { throw "Expected 3 AnittySurface children after + click, got $($surfaces.Count)" }
 
     Write-Host '[TEST] Double-click inline tab rename on Tab 0'
     $layout3 = Get-TabLayout -TabBarHwnd $tabBarHwnd -Count 3
@@ -192,7 +192,7 @@ try {
     Start-Sleep -Milliseconds 200
 
     $edits = [TabBarTestNative]::FindChildren($tabBarHwnd, 'Edit', $expectedPid)
-    if ($edits.Count -ne 1) { throw "Expected 1 Edit child inside GhosttyTabBar, found $($edits.Count)" }
+    if ($edits.Count -ne 1) { throw "Expected 1 Edit child inside AnittyTabBar, found $($edits.Count)" }
     $editHwnd = $edits[0]
     if (-not [TabBarTestNative]::IsWindowVisible($editHwnd)) {
         throw 'Expected inline rename Edit control to be visible after double-click'
@@ -206,7 +206,7 @@ try {
         throw "Expected window title to reflect renamed active tab 'CustomRenamedTab', got '$winTitle'"
     }
 
-    Write-Host '[TEST] Closing Tab 2 via close button on GhosttyTabBar'
+    Write-Host '[TEST] Closing Tab 2 via close button on AnittyTabBar'
     $closeSize = [int][Math]::Truncate((16 * $layout3.Dpi) / 96)
     $tabPad = [int][Math]::Truncate((10 * $layout3.Dpi) / 96)
     $glyphSize = [int][Math]::Truncate((8 * $layout3.Dpi) / 96)

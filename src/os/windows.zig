@@ -21,6 +21,8 @@ pub const unexpectedStatus = windows.unexpectedStatus;
 pub const BOOL = windows.BOOL;
 pub const CONTEXT = windows.CONTEXT;
 pub const COORD = windows.COORD;
+pub const GUID = windows.GUID;
+pub const HKEY = *opaque {};
 pub const HMODULE = windows.HMODULE;
 pub const DWORD = windows.DWORD;
 pub const DWORD_PTR = windows.DWORD_PTR;
@@ -198,6 +200,12 @@ pub const PROC_THREAD_ATTRIBUTE_NUMBER = 0x0000FFFF;
 pub const PROC_THREAD_ATTRIBUTE_THREAD = 0x00010000;
 pub const PSEUDOCONSOLE_INHERIT_CURSOR: DWORD = 0x1;
 pub const LOAD_WITH_ALTERED_SEARCH_PATH: DWORD = 0x8;
+pub const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x00000800;
+pub const HKEY_CURRENT_USER: HKEY = @ptrFromInt(@as(usize, @bitCast(@as(isize, @as(i32, @bitCast(@as(u32, 0x80000001)))))));
+pub const HKEY_LOCAL_MACHINE: HKEY = @ptrFromInt(@as(usize, @bitCast(@as(isize, @as(i32, @bitCast(@as(u32, 0x80000002)))))));
+pub const KEY_READ: DWORD = 0x20019;
+pub const REG_SZ: DWORD = 1;
+pub const ERROR_NO_MORE_ITEMS: i32 = 259;
 pub const S_OK = 0;
 pub const STD_ERROR_HANDLE: DWORD = 0xFFFFFFF4;
 pub const STD_INPUT_HANDLE: DWORD = 0xFFFFFFF6;
@@ -506,6 +514,26 @@ pub const exp = struct {
             dwCoInit: DWORD,
         ) callconv(.winapi) HRESULT;
         pub extern "ole32" fn CoUninitialize() callconv(.winapi) void;
+    };
+    pub const advapi32 = struct {
+        pub extern "advapi32" fn RegOpenKeyExW(
+            hKey: HKEY,
+            lpSubKey: [*:0]const u16,
+            ulOptions: DWORD,
+            samDesired: DWORD,
+            phkResult: *HKEY,
+        ) callconv(.winapi) i32;
+        pub extern "advapi32" fn RegEnumValueW(
+            hKey: HKEY,
+            dwIndex: DWORD,
+            lpValueName: [*]u16,
+            lpcchValueName: *DWORD,
+            lpReserved: ?*DWORD,
+            lpType: ?*DWORD,
+            lpData: ?[*]u8,
+            lpcbData: ?*DWORD,
+        ) callconv(.winapi) i32;
+        pub extern "advapi32" fn RegCloseKey(hKey: HKEY) callconv(.winapi) i32;
     };
     pub const user32 = struct {
         pub extern "user32" fn GetDoubleClickTime() callconv(.winapi) UINT;

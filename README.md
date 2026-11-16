@@ -3,13 +3,13 @@
   Anitty
 </h1>
   <p align="center">
-    Unofficial native Win32 port of <a href="https://github.com/ghostty-org/ghostty">Ghostty</a> for Windows.
+    Unofficial native Win32 terminal emulator forked from <a href="https://github.com/ghostty-org/ghostty">Ghostty</a>.
     <br />
-    <a href="https://github.com/RecursiveFunctions/ghostty-windows/releases"><img src="https://img.shields.io/github/v/release/RecursiveFunctions/ghostty-windows?label=release&color=0078d4" alt="Latest Release"></a>
-    <a href="https://github.com/RecursiveFunctions/ghostty-windows/actions/workflows/release-windows.yml"><img src="https://github.com/RecursiveFunctions/ghostty-windows/actions/workflows/release-windows.yml/badge.svg" alt="Release Windows"></a>
-    <a href="https://github.com/RecursiveFunctions/ghostty-windows/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/RecursiveFunctions/ghostty-windows/test.yml?branch=windows&label=tests" alt="Tests"></a>
+    <a href="https://github.com/RecursiveFunctions/anitty/releases"><img src="https://img.shields.io/github/v/release/RecursiveFunctions/anitty?label=release&color=37B836" alt="Latest Release"></a>
+    <a href="https://github.com/RecursiveFunctions/anitty/actions/workflows/release-windows.yml"><img src="https://github.com/RecursiveFunctions/anitty/actions/workflows/release-windows.yml/badge.svg" alt="Release Windows"></a>
+    <a href="https://github.com/RecursiveFunctions/anitty/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/RecursiveFunctions/anitty/test.yml?branch=windows&label=tests" alt="Tests"></a>
     <br />
-    <a href="https://github.com/RecursiveFunctions/ghostty-windows/releases">Releases</a>
+    <a href="https://github.com/RecursiveFunctions/anitty/releases">Releases</a>
     ·
     <a href="#installation">Installation</a>
     ·
@@ -25,20 +25,21 @@
 
 ## Installation
 
-Grab the latest build from the [Releases page](https://github.com/RecursiveFunctions/ghostty-windows/releases) 
+Grab the latest build from the [Releases page](https://github.com/RecursiveFunctions/anitty/releases) (for official macOS and Linux Ghostty builds, see [ghostty.org/download](https://ghostty.org/download)).
+
 ### Installer
 
-Run `Ghostty-Windows-Setup-x64.exe`. It installs per-user into `%LOCALAPPDATA%\Programs\Ghostty` without requiring admin rights, adds a Start menu shortcut, and optionally adds **"Open Ghostty here"** to the Explorer context menu.
+Run `Anitty-Windows-Setup-x64.exe`. It installs per-user into `%LOCALAPPDATA%\Programs\Anitty` without requiring admin rights, adds a Start menu shortcut, and optionally adds **"Open Anitty here"** to the Explorer context menu.
 
 ```powershell
 # Silent install / uninstall
-Ghostty-Windows-Setup-x64.exe /VERYSILENT /CURRENTUSER [/DIR="C:\path"] [/TASKS="contextmenu"]
-"%LOCALAPPDATA%\Programs\Ghostty\unins000.exe" /VERYSILENT
+Anitty-Windows-Setup-x64.exe /VERYSILENT /CURRENTUSER [/DIR="C:\path"] [/TASKS="contextmenu"]
+"%LOCALAPPDATA%\Programs\Anitty\unins000.exe" /VERYSILENT
 ```
 
 ### Portable zip
 
-Extract `Ghostty-Windows-x64.zip` anywhere and run `ghostty\bin\ghostty.exe`. Keep the folder structure intact so Ghostty can find its bundled `conpty.dll`, themes, shell integration scripts, and terminfo under `share\`.
+Extract `Anitty-Windows-x64.zip` anywhere and run `anitty\bin\anitty.exe`. Keep the folder structure intact so Anitty can find its bundled `conpty.dll`, themes, shell integration scripts, and terminfo under `share\`.
 
 ### Updating
 
@@ -46,13 +47,13 @@ Open the Command Palette (`ctrl+shift+p`) and run **Check for Updates** to downl
 
 ## Configuration
 
-Ghostty reads `%APPDATA%\ghostty\config.ghostty` (or `%APPDATA%\ghostty\config`) and creates a commented template on first run. If `XDG_CONFIG_HOME` is set, it takes precedence.
+Anitty reads `%APPDATA%\ghostty\config.ghostty` (or `%APPDATA%\ghostty\config`) for full configuration compatibility and creates a commented template on first run. If `XDG_CONFIG_HOME` is set, it takes precedence.
 
 - `ctrl+,` — open config in your default editor
 - `ctrl+shift+,` — reload config
 - Full option reference: [ghostty.org/docs/config](https://ghostty.org/docs/config)
 
-If `command` is not set, Ghostty starts the first shell it finds:
+If `command` is not set, Anitty starts the first shell it finds:
 1. `pwsh.exe` (PowerShell 7)
 2. `powershell.exe` (Windows PowerShell 5.1)
 3. `cmd.exe`
@@ -83,14 +84,14 @@ command = C:/msys64/usr/bin/fish.exe -l
 | `ctrl+enter` / `alt+enter`      | Toggle fullscreen          |
 | `ctrl+shift+q`                  | Quit                       |
 
-Run `ghostty +list-keybinds --default` from a console for the complete list.
+Run `anitty +list-keybinds --default` from a console for the complete list.
 
 ## Building
 
-Requires Zig `0.16.0-dev` (see `build.zig.zon`), Visual Studio 2022 Build Tools (C++ & Windows 11 SDK), PowerShell 5.1+, and [Inno Setup 6](https://jrsoftware.org/isinfo.php) if building the installer.
+Requires Zig `0.17.1` (see `build.zig.zon`), Visual Studio 2022 Build Tools (C++ & Windows 11 SDK), PowerShell 5.1+, and [Inno Setup 6](https://jrsoftware.org/isinfo.php) if building the installer.
 
 ```powershell
-# Debug build (zig-out\bin\ghostty.exe)
+# Debug build (zig-out\bin\anitty.exe)
 zig build -Dapp-runtime=win32
 
 # Run Win32 unit tests
@@ -99,7 +100,7 @@ zig build test -Dapp-runtime=win32 -Dtest-filter=win32
 # Release build + portable zip + installer
 zig build -Dapp-runtime=win32 -Doptimize=ReleaseFast -Dcpu=baseline -Dversion-string=1.4.1-windows -p build/release
 pwsh -File dist/windows/make-zip.ps1 -Prefix build/release -Version 1.4.1-windows
-ISCC.exe /DAppVersion=1.4.1-windows /DSourceDir=dist\windows\out\staging\ghostty /DOutputDir=dist\windows\out dist\windows\installer\ghostty.iss
+ISCC.exe /DAppVersion=1.4.1-windows /DSourceDir=dist\windows\out\staging\anitty /DOutputDir=dist\windows\out dist\windows\installer\anitty.iss
 ```
 
 For logs, crash dumps, bundled ConPTY details, [code signing policy](dist/windows/README-windows.md#code-signing-policy), and known platform limitations, see [`dist/windows/README-windows.md`](dist/windows/README-windows.md).

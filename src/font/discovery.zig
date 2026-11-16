@@ -984,6 +984,7 @@ pub const CoreText = struct {
 pub const Windows = struct {
     const freetype = @import("freetype");
     const dwrite = @import("dwrite_fallback.zig");
+    const windows = @import("../os/windows.zig");
 
     lib: Library,
 
@@ -1268,8 +1269,8 @@ pub const Windows = struct {
             const user_dir = fontsDir(alloc, "LOCALAPPDATA", "\\Microsoft\\Windows\\Fonts");
             if (system_dir) |dir| try paths.addDir(alloc, dir);
             if (user_dir) |dir| try paths.addDir(alloc, dir);
-            try paths.addRegistry(alloc, hkey_local_machine, system_dir);
-            try paths.addRegistry(alloc, hkey_current_user, system_dir);
+            try paths.addRegistry(alloc, windows.HKEY_LOCAL_MACHINE, system_dir);
+            try paths.addRegistry(alloc, windows.HKEY_CURRENT_USER, system_dir);
 
             std.mem.sort([:0]const u8, paths.list.items, {}, struct {
                 fn lessThan(_: void, a: [:0]const u8, b: [:0]const u8) bool {
@@ -1500,18 +1501,18 @@ pub const Windows = struct {
         fn addRegistry(
             self: *PathSet,
             alloc: Allocator,
-            root: HKEY,
+            root: windows.HKEY,
             system_dir: ?[]const u8,
         ) Allocator.Error!void {
-            var key: HKEY = undefined;
-            if (RegOpenKeyExW(
+            var key: windows.HKEY = undefined;
+            if (windows.exp.advapi32.RegOpenKeyExW(
                 root,
                 std.unicode.utf8ToUtf16LeStringLiteral("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts"),
                 0,
-                key_read,
+                windows.KEY_READ,
                 &key,
             ) != 0) return;
-            defer _ = RegCloseKey(key);
+            defer _ = windows.exp.advapi32.RegCloseKey(key);
 
             var name_buf: [1024]u16 = undefined;
             var data_buf: [1024]u16 = undefined;
@@ -1520,7 +1521,7 @@ pub const Windows = struct {
                 var name_len: u32 = name_buf.len;
                 var data_len: u32 = @sizeOf(@TypeOf(data_buf));
                 var value_type: u32 = 0;
-                const rc = RegEnumValueW(
+                const rc = windows.exp.advapi32.RegEnumValueW(
                     key,
                     i,
                     &name_buf,
@@ -1530,9 +1531,9 @@ pub const Windows = struct {
                     @ptrCast(&data_buf),
                     &data_len,
                 );
-                if (rc == error_no_more_items) break;
+                if (rc == windows.ERROR_NO_MORE_ITEMS) break;
                 if (rc != 0) continue;
-                if (value_type != reg_sz) continue;
+                if (value_type != windows.REG_SZ) continue;
 
                 var chars: []const u16 = data_buf[0 .. data_len / 2];
                 while (chars.len > 0 and chars[chars.len - 1] == 0) chars = chars[0 .. chars.len - 1];
@@ -1561,7 +1562,7 @@ pub const Windows = struct {
 
     fn userLocale() Locale {
         var buf: [85]u16 = undefined;
-        const n = GetUserDefaultLocaleName(&buf, buf.len);
+        const n = windows.exp.kernel32.GetUserDefaultLocaleName(&buf, buf.len);
         if (n <= 1) return .other;
         var ascii: [85]u8 = undefined;
         const len: usize = @intCast(n - 1);
@@ -1614,37 +1615,6 @@ pub const Windows = struct {
             return &.{ "Segoe UI", "Tahoma" };
         return &.{};
     }
-
-    const HKEY = *opaque {};
-    // Predefined HKEYs are sign-extended 32-bit values on 64-bit Windows.
-    const hkey_current_user: HKEY = @ptrFromInt(@as(usize, @bitCast(@as(isize, @as(i32, @bitCast(@as(u32, 0x80000001)))))));
-    const hkey_local_machine: HKEY = @ptrFromInt(@as(usize, @bitCast(@as(isize, @as(i32, @bitCast(@as(u32, 0x80000002)))))));
-    const key_read: u32 = 0x20019;
-    const reg_sz: u32 = 1;
-    const error_no_more_items: i32 = 259;
-
-    extern "advapi32" fn RegOpenKeyExW(
-        hKey: HKEY,
-        lpSubKey: [*:0]const u16,
-        ulOptions: u32,
-        samDesired: u32,
-        phkResult: *HKEY,
-    ) callconv(.winapi) i32;
-    extern "advapi32" fn RegEnumValueW(
-        hKey: HKEY,
-        dwIndex: u32,
-        lpValueName: [*]u16,
-        lpcchValueName: *u32,
-        lpReserved: ?*u32,
-        lpType: ?*u32,
-        lpData: ?[*]u8,
-        lpcbData: ?*u32,
-    ) callconv(.winapi) i32;
-    extern "advapi32" fn RegCloseKey(hKey: HKEY) callconv(.winapi) i32;
-    extern "kernel32" fn GetUserDefaultLocaleName(
-        lpLocaleName: [*]u16,
-        cchLocaleName: i32,
-    ) callconv(.winapi) i32;
 };
 
 test "descriptor hash" {

@@ -11,7 +11,7 @@ const c = @import("c.zig");
 const log = std.log.scoped(.win32);
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
-pub const class_name = L("GhosttyTabOverview");
+pub const class_name = L("AnittyTabOverview");
 
 const top_bar_height = 56;
 const search_width = 320;
@@ -41,11 +41,11 @@ pub const GridMetrics = struct {
     start_y: i32,
 
     pub fn compute(avail_w: i32, top_y: i32, dpi: c.UINT) GridMetrics {
-        const pad = scale(grid_pad, dpi);
-        const gap = scale(card_gap, dpi);
-        const min_w = @max(1, scale(card_min_width, dpi));
-        const max_w = @max(min_w, scale(card_max_width, dpi));
-        const ch = scale(card_height, dpi);
+        const pad = c.scaleDpi(grid_pad, dpi);
+        const gap = c.scaleDpi(card_gap, dpi);
+        const min_w = @max(1, c.scaleDpi(card_min_width, dpi));
+        const max_w = @max(min_w, c.scaleDpi(card_max_width, dpi));
+        const ch = c.scaleDpi(card_height, dpi);
         const inner_w = @max(min_w, avail_w - pad * 2);
         const cols: usize = @intCast(@max(1, @min(4, @divTrunc(inner_w + gap, min_w + gap))));
         const cols_i32: i32 = @intCast(cols);
@@ -93,10 +93,6 @@ tracking: bool = false,
 
 fn window(self: *TabOverview) *Window {
     return @alignCast(@fieldParentPtr("tab_overview", self));
-}
-
-fn scale(v: i32, dpi: c.UINT) i32 {
-    return @intCast(@divTrunc(v * @as(i32, @intCast(dpi)), 96));
 }
 
 pub fn create(self: *TabOverview, parent: c.HWND, instance: ?c.HINSTANCE) !void {
@@ -236,9 +232,9 @@ pub fn layout(self: *TabOverview) void {
     );
     if (self.edit_hwnd) |edit| {
         const dpi = c.GetDpiForWindow(hwnd);
-        const tbh = scale(top_bar_height, dpi);
-        const sw = @min(scale(search_width, dpi), @max(120, w - scale(180, dpi)));
-        const sh = scale(search_height, dpi);
+        const tbh = c.scaleDpi(top_bar_height, dpi);
+        const sw = @min(c.scaleDpi(search_width, dpi), @max(120, w - c.scaleDpi(180, dpi)));
+        const sh = c.scaleDpi(search_height, dpi);
         const sx = @divTrunc(w - sw, 2);
         const sy = @divTrunc(tbh - sh, 2);
         _ = c.MoveWindow(edit, sx, sy, sw, sh, .TRUE);
@@ -250,18 +246,11 @@ pub fn refreshFilter(self: *TabOverview) void {
     const alloc = win.app.core_app.alloc;
     self.filtered.clearRetainingCapacity();
 
-    var query_utf8: ?[]u8 = null;
+    const query_utf8: ?[:0]u8 = if (self.edit_hwnd) |edit|
+        c.getWindowTextUtf8(alloc, edit) catch null
+    else
+        null;
     defer if (query_utf8) |q| alloc.free(q);
-    if (self.edit_hwnd) |edit| {
-        const len: usize = @intCast(@max(0, c.GetWindowTextLengthW(edit)));
-        if (len > 0) {
-            if (alloc.allocSentinel(u16, len, 0)) |wide| {
-                defer alloc.free(wide);
-                const n: usize = @intCast(@max(0, c.GetWindowTextW(edit, wide.ptr, @intCast(len + 1))));
-                query_utf8 = std.unicode.utf16LeToUtf8Alloc(alloc, wide[0..n]) catch null;
-            } else |_| {}
-        }
-    }
 
     const trimmed = std.mem.trim(u8, query_utf8 orelse "", " \t\r\n");
     if (trimmed.len == 0) {
@@ -294,17 +283,17 @@ fn newTabButtonRect(hwnd: c.HWND) c.RECT {
     var r: c.RECT = .{};
     _ = c.GetClientRect(hwnd, &r);
     const dpi = c.GetDpiForWindow(hwnd);
-    const tbh = scale(top_bar_height, dpi);
-    const bw = scale(new_btn_width, dpi);
-    const bh = scale(new_btn_height, dpi);
-    const right = r.right - scale(grid_pad, dpi);
+    const tbh = c.scaleDpi(top_bar_height, dpi);
+    const bw = c.scaleDpi(new_btn_width, dpi);
+    const bh = c.scaleDpi(new_btn_height, dpi);
+    const right = r.right - c.scaleDpi(grid_pad, dpi);
     const top = @divTrunc(tbh - bh, 2);
     return .{ .left = right - bw, .top = top, .right = right, .bottom = top + bh };
 }
 
 fn closeRectInCard(card: c.RECT, dpi: c.UINT) c.RECT {
-    const cs = scale(close_btn_size, dpi);
-    const m = scale(8, dpi);
+    const cs = c.scaleDpi(close_btn_size, dpi);
+    const m = c.scaleDpi(8, dpi);
     return .{
         .left = card.right - m - cs,
         .top = card.top + m,
@@ -314,21 +303,19 @@ fn closeRectInCard(card: c.RECT, dpi: c.UINT) c.RECT {
 }
 
 fn hitAt(self: *const TabOverview, hwnd: c.HWND, x: i32, y: i32) ?Hit {
-    const new_r = newTabButtonRect(hwnd);
-    if (x >= new_r.left and x < new_r.right and y >= new_r.top and y < new_r.bottom) {
+    if (c.rectContains(newTabButtonRect(hwnd), x, y)) {
         return .new_tab;
     }
     var r: c.RECT = .{};
     _ = c.GetClientRect(hwnd, &r);
     const dpi = c.GetDpiForWindow(hwnd);
-    const tbh = scale(top_bar_height, dpi);
+    const tbh = c.scaleDpi(top_bar_height, dpi);
     if (y < tbh) return null;
     const gm = GridMetrics.compute(r.right - r.left, tbh, dpi);
     for (0..self.filtered.items.len) |slot| {
         const cr = gm.cardRect(slot, self.scroll_y);
-        if (x >= cr.left and x < cr.right and y >= cr.top and y < cr.bottom) {
-            const close_r = closeRectInCard(cr, dpi);
-            if (x >= close_r.left and x < close_r.right and y >= close_r.top and y < close_r.bottom) {
+        if (c.rectContains(cr, x, y)) {
+            if (c.rectContains(closeRectInCard(cr, dpi), x, y)) {
                 return .{ .close = slot };
             }
             return .{ .card = slot };
@@ -378,19 +365,18 @@ fn paint(self: *TabOverview, hwnd: c.HWND) void {
     const alloc = win.app.core_app.alloc;
     const palette = TabBar.Palette.init(&win.app.config);
     const dpi = c.GetDpiForWindow(hwnd);
-    const tbh = scale(top_bar_height, dpi);
+    const tbh = c.scaleDpi(top_bar_height, dpi);
 
-    fill(mem, rect, palette.active);
-    fill(mem, .{ .left = 0, .top = 0, .right = w, .bottom = tbh }, palette.bar);
-    fill(mem, .{ .left = 0, .top = tbh - 1, .right = w, .bottom = tbh }, palette.separator);
+    c.fillRectColor(mem, rect, palette.active);
+    c.fillRectColor(mem, .{ .left = 0, .top = 0, .right = w, .bottom = tbh }, palette.bar);
+    c.fillRectColor(mem, .{ .left = 0, .top = tbh - 1, .right = w, .bottom = tbh }, palette.separator);
 
     _ = c.SetBkMode(mem, c.TRANSPARENT);
 
-    // Draw "+ New Tab" button
     const new_r = newTabButtonRect(hwnd);
     const new_hov = if (self.hover) |hv| hv == .new_tab else false;
-    fill(mem, new_r, if (new_hov) palette.hover else palette.active);
-    drawBorder(mem, new_r, palette.separator);
+    c.fillRectColor(mem, new_r, if (new_hov) palette.hover else palette.active);
+    c.drawRectBorder(mem, new_r, palette.separator);
     {
         const old_f = if (self.font) |f| c.SelectObject(mem, f) else null;
         defer if (old_f) |o| {
@@ -415,19 +401,18 @@ fn paint(self: *TabOverview, hwnd: c.HWND) void {
             .new_tab => false,
         } else false;
 
-        fill(mem, cr, if (is_sel or is_hov) palette.hover else palette.bar);
-        drawBorder(mem, cr, if (is_sel or is_active) palette.text else palette.separator);
+        c.fillRectColor(mem, cr, if (is_sel or is_hov) palette.hover else palette.bar);
+        c.drawRectBorder(mem, cr, if (is_sel or is_active) palette.text else palette.separator);
 
-        const pad = scale(12, dpi);
+        const pad = c.scaleDpi(12, dpi);
         const close_r = closeRectInCard(cr, dpi);
         const close_hov = if (self.hover) |hv| switch (hv) {
             .close => |s| s == slot,
             else => false,
         } else false;
-        if (close_hov) fill(mem, close_r, palette.separator);
-        drawCross(mem, close_r, if (close_hov) palette.text else palette.text_inactive, scale(8, dpi));
+        if (close_hov) c.fillRectColor(mem, close_r, palette.separator);
+        c.drawCrossGlyph(mem, close_r, if (close_hov) palette.text else palette.text_inactive, c.scaleDpi(8, dpi), false);
 
-        // Tab number + title
         const title_font = self.bold_font orelse self.font;
         {
             const old_f = if (title_font) |f| c.SelectObject(mem, f) else null;
@@ -442,16 +427,15 @@ fn paint(self: *TabOverview, hwnd: c.HWND) void {
                     defer alloc.free(wide);
                     var tr: c.RECT = .{
                         .left = cr.left + pad,
-                        .top = cr.top + scale(10, dpi),
-                        .right = close_r.left - scale(6, dpi),
-                        .bottom = cr.top + scale(36, dpi),
+                        .top = cr.top + c.scaleDpi(10, dpi),
+                        .right = close_r.left - c.scaleDpi(6, dpi),
+                        .bottom = cr.top + c.scaleDpi(36, dpi),
                     };
                     _ = c.DrawTextW(mem, wide.ptr, @intCast(wide.len), &tr, c.DT_SINGLELINE | c.DT_VCENTER | c.DT_LEFT | c.DT_NOPREFIX | c.DT_END_ELLIPSIS);
                 } else |_| {}
             } else |_| {}
         }
 
-        // PWD & Split count
         {
             const old_f = if (self.font) |f| c.SelectObject(mem, f) else null;
             defer if (old_f) |o| {
@@ -465,9 +449,9 @@ fn paint(self: *TabOverview, hwnd: c.HWND) void {
                     defer alloc.free(wide_pwd);
                     var pr: c.RECT = .{
                         .left = cr.left + pad,
-                        .top = cr.top + scale(42, dpi),
+                        .top = cr.top + c.scaleDpi(42, dpi),
                         .right = cr.right - pad,
-                        .bottom = cr.top + scale(68, dpi),
+                        .bottom = cr.top + c.scaleDpi(68, dpi),
                     };
                     _ = c.DrawTextW(mem, wide_pwd.ptr, @intCast(wide_pwd.len), &pr, c.DT_SINGLELINE | c.DT_VCENTER | c.DT_LEFT | c.DT_NOPREFIX | c.DT_END_ELLIPSIS);
                 } else |_| {}
@@ -487,9 +471,9 @@ fn paint(self: *TabOverview, hwnd: c.HWND) void {
             if (std.unicode.utf8ToUtf16Le(&wide_info, info_str)) |n| {
                 var ir: c.RECT = .{
                     .left = cr.left + pad,
-                    .top = cr.bottom - scale(32, dpi),
+                    .top = cr.bottom - c.scaleDpi(32, dpi),
                     .right = cr.right - pad,
-                    .bottom = cr.bottom - scale(8, dpi),
+                    .bottom = cr.bottom - c.scaleDpi(8, dpi),
                 };
                 _ = c.DrawTextW(mem, &wide_info, @intCast(n), &ir, c.DT_SINGLELINE | c.DT_VCENTER | c.DT_LEFT | c.DT_NOPREFIX);
             } else |_| {}
@@ -499,51 +483,13 @@ fn paint(self: *TabOverview, hwnd: c.HWND) void {
     _ = c.BitBlt(hdc, 0, 0, w, h, mem, 0, 0, c.SRCCOPY);
 }
 
-fn fill(hdc: c.HDC, rect: c.RECT, color: c.COLORREF) void {
-    const brush = c.CreateSolidBrush(color) orelse return;
-    defer _ = c.DeleteObject(brush);
-    _ = c.FillRect(hdc, &rect, brush);
-}
-
-fn drawBorder(hdc: c.HDC, r: c.RECT, color: c.COLORREF) void {
-    const pen = c.CreatePen(c.PS_SOLID, 1, color) orelse return;
-    defer _ = c.DeleteObject(pen);
-    const old = c.SelectObject(hdc, pen);
-    defer if (old) |o| {
-        _ = c.SelectObject(hdc, o);
-    };
-    _ = c.MoveToEx(hdc, r.left, r.top, null);
-    _ = c.LineTo(hdc, r.right - 1, r.top);
-    _ = c.LineTo(hdc, r.right - 1, r.bottom - 1);
-    _ = c.LineTo(hdc, r.left, r.bottom - 1);
-    _ = c.LineTo(hdc, r.left, r.top);
-}
-
-fn drawCross(hdc: c.HDC, r: c.RECT, color: c.COLORREF, size: i32) void {
-    const pen = c.CreatePen(c.PS_SOLID, 1, color) orelse return;
-    defer _ = c.DeleteObject(pen);
-    const old = c.SelectObject(hdc, pen);
-    defer if (old) |o| {
-        _ = c.SelectObject(hdc, o);
-    };
-    const cx = @divTrunc(r.left + r.right, 2);
-    const cy = @divTrunc(r.top + r.bottom, 2);
-    const half = @divTrunc(size, 2);
-    _ = c.MoveToEx(hdc, cx - half, cy - half, null);
-    _ = c.LineTo(hdc, cx + half + 1, cy + half + 1);
-    _ = c.MoveToEx(hdc, cx + half, cy - half, null);
-    _ = c.LineTo(hdc, cx - half - 1, cy + half + 1);
-}
-
 fn editSubclassProc(
     hwnd: c.HWND,
     msg: c.UINT,
     wparam: c.WPARAM,
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *TabOverview = @ptrFromInt(ptr);
+    const self = c.userData(TabOverview, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     const orig = self.orig_edit_proc orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
@@ -581,16 +527,12 @@ pub fn wndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *TabOverview = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(TabOverview, hwnd, lparam);
         self.hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *TabOverview = @ptrFromInt(ptr);
+    const self = c.userData(TabOverview, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         c.WM_PAINT => {
@@ -618,13 +560,8 @@ pub fn wndProc(
             }
         },
         c.WM_MOUSEMOVE => {
-            if (!self.tracking) {
-                var tme: c.TRACKMOUSEEVENT = .{ .dwFlags = c.TME_LEAVE, .hwndTrack = hwnd };
-                if (c.TrackMouseEvent(&tme).toBool()) self.tracking = true;
-            }
-            const x: i16 = @bitCast(c.loword(lparam));
-            const y: i16 = @bitCast(c.hiword(lparam));
-            const next = self.hitAt(hwnd, x, y);
+            c.trackMouseLeave(hwnd, &self.tracking);
+            const next = self.hitAt(hwnd, c.xFromLparam(lparam), c.yFromLparam(lparam));
             if (!std.meta.eql(self.hover, next)) {
                 self.hover = next;
                 self.invalidate();
@@ -640,9 +577,7 @@ pub fn wndProc(
             return 0;
         },
         c.WM_LBUTTONUP => {
-            const x: i16 = @bitCast(c.loword(lparam));
-            const y: i16 = @bitCast(c.hiword(lparam));
-            if (self.hitAt(hwnd, x, y)) |hit| {
+            if (self.hitAt(hwnd, c.xFromLparam(lparam), c.yFromLparam(lparam))) |hit| {
                 const win = self.window();
                 switch (hit) {
                     .card => |slot| self.activateSlot(slot),

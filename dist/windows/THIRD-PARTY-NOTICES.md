@@ -1,12 +1,12 @@
 # Third-party notices
 
-Ghostty for Windows is an unofficial community port of
+Anitty is an unofficial community Windows port of
 [Ghostty](https://github.com/ghostty-org/ghostty). It is not affiliated
 with or endorsed by the Ghostty project or its maintainers.
 
 ## Ghostty
 
-Ghostty for Windows is derived from Ghostty, which is licensed under the
+Anitty is derived from Ghostty, which is licensed under the
 MIT License:
 
     Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors
@@ -43,14 +43,14 @@ NuGet package, built from [microsoft/terminal](https://github.com/microsoft/term
 
 ## Embedded fonts
 
-`ghostty.exe` embeds fonts that Ghostty ships with (including JetBrains
+`anitty.exe` embeds fonts that Ghostty ships with (including JetBrains
 Mono, Noto Emoji and Symbols Nerd Font). Their licenses (SIL Open Font
 License 1.1, MIT and BSD-2-Clause) and the list of which font uses which
 license are in `licenses/fonts/`.
 
 ## Other dependencies
 
-Ghostty statically links further open-source libraries (for example
+Anitty statically links further open-source libraries (for example
 FreeType, HarfBuzz, oniguruma, simdutf and glslang). Their licenses are in
 their upstream sources, which Ghostty's build fetches as listed in
 `build.zig.zon` and the `pkg/` directory of the source repository.

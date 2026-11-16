@@ -24,28 +24,19 @@ const balloon_timeout_ms: c.UINT = 10 * std.time.ms_per_s;
 const progress_timer_id: c.UINT_PTR = 0x4750;
 const progress_timeout_ms: c.UINT = 15 * std.time.ms_per_s;
 
-const GUID = extern struct {
-    data1: u32,
-    data2: u16,
-    data3: u16,
-    data4: [8]u8,
+const CLSID_TaskbarList: c.GUID = .{
+    .Data1 = 0x56FDF344,
+    .Data2 = 0xFD6D,
+    .Data3 = 0x11d0,
+    .Data4 = .{ 0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90 },
 };
 
-const CLSID_TaskbarList: GUID = .{
-    .data1 = 0x56FDF344,
-    .data2 = 0xFD6D,
-    .data3 = 0x11d0,
-    .data4 = .{ 0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90 },
+const IID_ITaskbarList3: c.GUID = .{
+    .Data1 = 0xEA1AFB91,
+    .Data2 = 0x9E28,
+    .Data3 = 0x4B86,
+    .Data4 = .{ 0x90, 0xE9, 0x9E, 0x9F, 0x8A, 0x5E, 0xEF, 0xAF },
 };
-
-const IID_ITaskbarList3: GUID = .{
-    .data1 = 0xEA1AFB91,
-    .data2 = 0x9E28,
-    .data3 = 0x4B86,
-    .data4 = .{ 0x90, 0xE9, 0x9E, 0x9F, 0x8A, 0x5E, 0xEF, 0xAF },
-};
-
-const CLSCTX_INPROC_SERVER: c.DWORD = 0x1;
 
 const TBPF_NOPROGRESS: c_int = 0x0;
 const TBPF_INDETERMINATE: c_int = 0x1;
@@ -57,7 +48,7 @@ const ITaskbarList3 = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*ITaskbarList3, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*ITaskbarList3, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*ITaskbarList3) callconv(.winapi) u32,
         Release: *const fn (*ITaskbarList3) callconv(.winapi) u32,
         HrInit: *const fn (*ITaskbarList3) callconv(.winapi) c.HRESULT,
@@ -85,7 +76,7 @@ const NOTIFYICONDATAW = extern struct {
     uVersion: c.UINT = 0,
     szInfoTitle: [64]u16 = @splat(0),
     dwInfoFlags: c.DWORD = 0,
-    guidItem: GUID = std.mem.zeroes(GUID),
+    guidItem: c.GUID = std.mem.zeroes(c.GUID),
     hBalloonIcon: ?c.HICON = null,
 };
 
@@ -106,22 +97,6 @@ const NIIF_LARGE_ICON: c.DWORD = 0x20;
 const NIN_BALLOONTIMEOUT: u16 = 0x404;
 const NIN_BALLOONUSERCLICK: u16 = 0x405;
 
-const GWL_EXSTYLE: c_int = -20;
-const WS_EX_TOPMOST: usize = 0x8;
-const SW_HIDE: c_int = 0;
-const HWND_TOPMOST: c.HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-const HWND_NOTOPMOST: c.HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
-const IDI_APPLICATION = c.makeIntResource(32512);
-
-extern "ole32" fn CoCreateInstance(
-    clsid: *const GUID,
-    outer: ?*anyopaque,
-    context: c.DWORD,
-    iid: *const GUID,
-    out: *?*anyopaque,
-) callconv(.winapi) c.HRESULT;
-extern "shell32" fn Shell_NotifyIconW(message: c.DWORD, data: *NOTIFYICONDATAW) callconv(.winapi) c.BOOL;
-
 pub fn deinit(app: *App) void {
     const state = &app.taskbar;
     removeIcon(app);
@@ -134,10 +109,10 @@ fn taskbarList(app: *App) ?*ITaskbarList3 {
     if (state.list) |list| return list;
     if (state.list_failed) return null;
     var out: ?*anyopaque = null;
-    const hr = CoCreateInstance(
+    const hr = c.CoCreateInstance(
         &CLSID_TaskbarList,
         null,
-        CLSCTX_INPROC_SERVER,
+        c.CLSCTX_INPROC_SERVER,
         &IID_ITaskbarList3,
         &out,
     );
@@ -196,9 +171,7 @@ pub fn setProgress(
 
 fn progressTimerProc(hwnd: c.HWND, _: c.UINT, id: c.UINT_PTR, _: c.DWORD) callconv(.winapi) void {
     _ = c.KillTimer(hwnd, id);
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return;
-    const window: *Window = @ptrFromInt(ptr);
+    const window = c.userData(Window, hwnd) orelse return;
     log.debug("taskbar progress timed out", .{});
     setProgress(window.app, window, .{ .state = .remove });
 }
@@ -250,7 +223,7 @@ pub fn notify(app: *App, title: []const u8, body: []const u8) void {
     } else {
         data.dwInfoFlags = NIIF_INFO;
     }
-    const ok = Shell_NotifyIconW(NIM_MODIFY, &data).toBool();
+    const ok = c.Shell_NotifyIconW(NIM_MODIFY, &data).toBool();
     log.debug("desktop notification shown={} title={s}", .{ ok, title });
     if (!ok) {
         if (!app.taskbar.hidden) removeIcon(app);
@@ -291,7 +264,7 @@ fn balloonDone(app: *App) void {
 
 fn loadIcon(app: *App) ?c.HICON {
     return c.LoadIconW(app.instance, c.makeIntResource(1)) orelse
-        c.LoadIconW(null, IDI_APPLICATION);
+        c.LoadIconW(null, c.IDI_APPLICATION);
 }
 
 fn ensureIcon(app: *App) bool {
@@ -305,9 +278,9 @@ fn ensureIcon(app: *App) bool {
         .uCallbackMessage = WM_TRAY_CALLBACK,
         .hIcon = loadIcon(app),
     };
-    const tip = L("Ghostty");
+    const tip = L("Anitty");
     @memcpy(data.szTip[0..tip.len], tip);
-    state.icon_added = Shell_NotifyIconW(NIM_ADD, &data).toBool();
+    state.icon_added = c.Shell_NotifyIconW(NIM_ADD, &data).toBool();
     if (!state.icon_added) log.warn("unable to add notification area icon", .{});
     return state.icon_added;
 }
@@ -320,7 +293,7 @@ fn removeIcon(app: *App) void {
     const hwnd = app.msg_hwnd orelse return;
     _ = c.KillTimer(hwnd, balloon_timer_id);
     var data: NOTIFYICONDATAW = .{ .hWnd = hwnd, .uID = tray_icon_id };
-    _ = Shell_NotifyIconW(NIM_DELETE, &data);
+    _ = c.Shell_NotifyIconW(NIM_DELETE, &data);
 }
 
 fn copyWide(app: *App, dst: []u16, src: []const u8) void {
@@ -339,7 +312,7 @@ pub fn toggleVisibility(app: *App) void {
     app.taskbar.hidden = true;
     _ = ensureIcon(app);
     for (app.windows.items) |window| {
-        if (window.hwnd) |hwnd| _ = c.ShowWindow(hwnd, SW_HIDE);
+        if (window.hwnd) |hwnd| _ = c.ShowWindow(hwnd, c.SW_HIDE);
     }
     log.debug("windows hidden count={d}", .{app.windows.items.len});
 }
@@ -362,8 +335,8 @@ fn showWindows(app: *App) void {
 
 pub fn setFloat(window: *Window, mode: apprt.action.FloatWindow) void {
     const hwnd = window.hwnd orelse return;
-    const ex: usize = @bitCast(c.GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
-    const topmost = ex & WS_EX_TOPMOST != 0;
+    const ex: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWL_EXSTYLE));
+    const topmost = ex & c.WS_EX_TOPMOST != 0;
     const want = switch (mode) {
         .on => true,
         .off => false,
@@ -371,7 +344,7 @@ pub fn setFloat(window: *Window, mode: apprt.action.FloatWindow) void {
     };
     _ = c.SetWindowPos(
         hwnd,
-        if (want) HWND_TOPMOST else HWND_NOTOPMOST,
+        if (want) c.HWND_TOPMOST else c.HWND_NOTOPMOST,
         0,
         0,
         0,

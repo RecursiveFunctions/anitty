@@ -13,7 +13,7 @@ const c = @import("c.zig");
 const log = std.log.scoped(.win32);
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
-pub const class_name = L("GhosttyCommandPalette");
+pub const class_name = L("AnittyCommandPalette");
 
 const palette_width = 560;
 const palette_max_height = 420;
@@ -55,10 +55,6 @@ tracking: bool = false,
 
 fn window(self: *CommandPalette) *Window {
     return @alignCast(@fieldParentPtr("command_palette", self));
-}
-
-fn scale(v: i32, dpi: c.UINT) i32 {
-    return @intCast(@divTrunc(v * @as(i32, @intCast(dpi)), 96));
 }
 
 pub fn isActionSupported(action: input.Binding.Action) bool {
@@ -212,19 +208,19 @@ pub fn layout(self: *CommandPalette) void {
     const ch = client.bottom - client.top;
     const dpi = c.GetDpiForWindow(hwnd);
 
-    const w = @min(scale(palette_width, dpi), @max(200, cw - scale(32, dpi)));
-    const hh = scale(header_height, dpi);
-    const rh = scale(row_height, dpi);
+    const w = @min(c.scaleDpi(palette_width, dpi), @max(200, cw - c.scaleDpi(32, dpi)));
+    const hh = c.scaleDpi(header_height, dpi);
+    const rh = c.scaleDpi(row_height, dpi);
     const visible_rows: i32 = @intCast(@min(@max(self.filtered.items.len, 1), 8));
-    const desired_h = hh + visible_rows * rh + scale(8, dpi);
-    const h = @min(@min(scale(palette_max_height, dpi), desired_h), @max(hh + rh, ch - scale(64, dpi)));
+    const desired_h = hh + visible_rows * rh + c.scaleDpi(8, dpi);
+    const h = @min(@min(c.scaleDpi(palette_max_height, dpi), desired_h), @max(hh + rh, ch - c.scaleDpi(64, dpi)));
     const x = @divTrunc(cw - w, 2);
-    const y = @min(scale(top_offset, dpi), @max(8, @divTrunc(ch - h, 4)));
+    const y = @min(c.scaleDpi(top_offset, dpi), @max(8, @divTrunc(ch - h, 4)));
 
     _ = c.SetWindowPos(hwnd, null, x, y, w, h, c.SWP_NOACTIVATE);
     if (self.edit_hwnd) |edit| {
-        const px = scale(pad_x, dpi);
-        const edit_h = @max(18, hh - scale(18, dpi));
+        const px = c.scaleDpi(pad_x, dpi);
+        const edit_h = @max(18, hh - c.scaleDpi(18, dpi));
         const edit_y = @divTrunc(hh - edit_h, 2);
         _ = c.MoveWindow(edit, px, edit_y, @max(60, w - px * 2), edit_h, .TRUE);
     }
@@ -343,17 +339,7 @@ pub fn filterEntries(self: *CommandPalette, query: []const u8) !void {
 fn onQueryChanged(self: *CommandPalette) void {
     const edit = self.edit_hwnd orelse return;
     const alloc = self.window().app.core_app.alloc;
-    const len: usize = @intCast(@max(0, c.GetWindowTextLengthW(edit)));
-    if (len == 0) {
-        self.filterEntries("") catch {};
-        self.layout();
-        self.invalidate();
-        return;
-    }
-    const wide = alloc.allocSentinel(u16, len, 0) catch return;
-    defer alloc.free(wide);
-    const n: usize = @intCast(@max(0, c.GetWindowTextW(edit, wide.ptr, @intCast(len + 1))));
-    const utf8 = std.unicode.utf16LeToUtf8Alloc(alloc, wide[0..n]) catch return;
+    const utf8 = c.getWindowTextUtf8(alloc, edit) catch return;
     defer alloc.free(utf8);
     self.filterEntries(utf8) catch {};
     self.layout();
@@ -365,8 +351,8 @@ fn visibleRowCount(self: *const CommandPalette) usize {
     var r: c.RECT = .{};
     _ = c.GetClientRect(hwnd, &r);
     const dpi = c.GetDpiForWindow(hwnd);
-    const hh = scale(header_height, dpi);
-    const rh = @max(1, scale(row_height, dpi));
+    const hh = c.scaleDpi(header_height, dpi);
+    const rh = @max(1, c.scaleDpi(row_height, dpi));
     const avail = @max(0, (r.bottom - r.top) - hh);
     return @intCast(@max(1, @divTrunc(avail, rh)));
 }
@@ -426,9 +412,9 @@ fn activateSelected(self: *CommandPalette) void {
 fn rowAtY(self: *const CommandPalette, y: i32) ?usize {
     const hwnd = self.hwnd orelse return null;
     const dpi = c.GetDpiForWindow(hwnd);
-    const hh = scale(header_height, dpi);
+    const hh = c.scaleDpi(header_height, dpi);
     if (y < hh) return null;
-    const rh = @max(1, scale(row_height, dpi));
+    const rh = @max(1, c.scaleDpi(row_height, dpi));
     const idx = self.scroll_offset + @as(usize, @intCast(@divTrunc(y - hh, rh)));
     if (idx >= self.filtered.items.len) return null;
     return idx;
@@ -458,13 +444,13 @@ fn paint(self: *CommandPalette, hwnd: c.HWND) void {
     const alloc = win.app.core_app.alloc;
     const palette = TabBar.Palette.init(&win.app.config);
     const dpi = c.GetDpiForWindow(hwnd);
-    const hh = scale(header_height, dpi);
-    const rh = scale(row_height, dpi);
-    const px = scale(pad_x, dpi);
+    const hh = c.scaleDpi(header_height, dpi);
+    const rh = c.scaleDpi(row_height, dpi);
+    const px = c.scaleDpi(pad_x, dpi);
 
-    fill(mem, rect, palette.bar);
-    fill(mem, .{ .left = 0, .top = hh - 1, .right = w, .bottom = hh }, palette.separator);
-    drawBorder(mem, rect, palette.separator);
+    c.fillRectColor(mem, rect, palette.bar);
+    c.fillRectColor(mem, .{ .left = 0, .top = hh - 1, .right = w, .bottom = hh }, palette.separator);
+    c.drawRectBorder(mem, rect, palette.separator);
 
     _ = c.SetBkMode(mem, c.TRANSPARENT);
 
@@ -492,9 +478,9 @@ fn paint(self: *CommandPalette, hwnd: c.HWND) void {
         const is_sel = row_idx == self.selected;
         const is_hov = if (self.hover) |hv| hv == row_idx else false;
         if (is_sel) {
-            fill(mem, row_r, palette.active);
+            c.fillRectColor(mem, row_r, palette.active);
         } else if (is_hov) {
-            fill(mem, row_r, palette.hover);
+            c.fillRectColor(mem, row_r, palette.hover);
         }
 
         var right_limit = w - px;
@@ -506,7 +492,7 @@ fn paint(self: *CommandPalette, hwnd: c.HWND) void {
             _ = c.SetTextColor(mem, palette.text_inactive);
             if (std.unicode.utf8ToUtf16LeAlloc(alloc, sc)) |wide_sc| {
                 defer alloc.free(wide_sc);
-                const sc_w = @min(scale(160, dpi), @as(i32, @intCast(wide_sc.len)) * scale(8, dpi) + scale(12, dpi));
+                const sc_w = @min(c.scaleDpi(160, dpi), @as(i32, @intCast(wide_sc.len)) * c.scaleDpi(8, dpi) + c.scaleDpi(12, dpi));
                 var sc_r: c.RECT = .{
                     .left = right_limit - sc_w,
                     .top = top,
@@ -514,7 +500,7 @@ fn paint(self: *CommandPalette, hwnd: c.HWND) void {
                     .bottom = top + rh,
                 };
                 _ = c.DrawTextW(mem, wide_sc.ptr, @intCast(wide_sc.len), &sc_r, c.DT_SINGLELINE | c.DT_VCENTER | c.DT_RIGHT | c.DT_NOPREFIX);
-                right_limit = sc_r.left - scale(8, dpi);
+                right_limit = sc_r.left - c.scaleDpi(8, dpi);
             } else |_| {}
         }
 
@@ -529,9 +515,9 @@ fn paint(self: *CommandPalette, hwnd: c.HWND) void {
                 defer alloc.free(wide_t);
                 var title_r: c.RECT = .{
                     .left = px,
-                    .top = top + scale(4, dpi),
+                    .top = top + c.scaleDpi(4, dpi),
                     .right = right_limit,
-                    .bottom = if (entry.description.len > 0) top + @divTrunc(rh, 2) + scale(2, dpi) else top + rh - scale(4, dpi),
+                    .bottom = if (entry.description.len > 0) top + @divTrunc(rh, 2) + c.scaleDpi(2, dpi) else top + rh - c.scaleDpi(4, dpi),
                 };
                 _ = c.DrawTextW(mem, wide_t.ptr, @intCast(wide_t.len), &title_r, c.DT_SINGLELINE | c.DT_VCENTER | c.DT_LEFT | c.DT_NOPREFIX | c.DT_END_ELLIPSIS);
             } else |_| {}
@@ -549,7 +535,7 @@ fn paint(self: *CommandPalette, hwnd: c.HWND) void {
                     .left = px,
                     .top = top + @divTrunc(rh, 2),
                     .right = right_limit,
-                    .bottom = top + rh - scale(4, dpi),
+                    .bottom = top + rh - c.scaleDpi(4, dpi),
                 };
                 _ = c.DrawTextW(mem, wide_d.ptr, @intCast(wide_d.len), &desc_r, c.DT_SINGLELINE | c.DT_VCENTER | c.DT_LEFT | c.DT_NOPREFIX | c.DT_END_ELLIPSIS);
             } else |_| {}
@@ -559,35 +545,13 @@ fn paint(self: *CommandPalette, hwnd: c.HWND) void {
     _ = c.BitBlt(hdc, 0, 0, w, h, mem, 0, 0, c.SRCCOPY);
 }
 
-fn fill(hdc: c.HDC, rect: c.RECT, color: c.COLORREF) void {
-    const brush = c.CreateSolidBrush(color) orelse return;
-    defer _ = c.DeleteObject(brush);
-    _ = c.FillRect(hdc, &rect, brush);
-}
-
-fn drawBorder(hdc: c.HDC, r: c.RECT, color: c.COLORREF) void {
-    const pen = c.CreatePen(c.PS_SOLID, 1, color) orelse return;
-    defer _ = c.DeleteObject(pen);
-    const old = c.SelectObject(hdc, pen);
-    defer if (old) |o| {
-        _ = c.SelectObject(hdc, o);
-    };
-    _ = c.MoveToEx(hdc, r.left, r.top, null);
-    _ = c.LineTo(hdc, r.right - 1, r.top);
-    _ = c.LineTo(hdc, r.right - 1, r.bottom - 1);
-    _ = c.LineTo(hdc, r.left, r.bottom - 1);
-    _ = c.LineTo(hdc, r.left, r.top);
-}
-
 fn editSubclassProc(
     hwnd: c.HWND,
     msg: c.UINT,
     wparam: c.WPARAM,
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *CommandPalette = @ptrFromInt(ptr);
+    const self = c.userData(CommandPalette, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     const orig = self.orig_edit_proc orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
@@ -633,16 +597,12 @@ pub fn wndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *CommandPalette = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(CommandPalette, hwnd, lparam);
         self.hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *CommandPalette = @ptrFromInt(ptr);
+    const self = c.userData(CommandPalette, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         c.WM_PAINT => {
@@ -669,12 +629,8 @@ pub fn wndProc(
             }
         },
         c.WM_MOUSEMOVE => {
-            if (!self.tracking) {
-                var tme: c.TRACKMOUSEEVENT = .{ .dwFlags = c.TME_LEAVE, .hwndTrack = hwnd };
-                if (c.TrackMouseEvent(&tme).toBool()) self.tracking = true;
-            }
-            const y: i16 = @bitCast(c.hiword(lparam));
-            const next = self.rowAtY(y);
+            c.trackMouseLeave(hwnd, &self.tracking);
+            const next = self.rowAtY(c.yFromLparam(lparam));
             if (self.hover != next) {
                 self.hover = next;
                 self.invalidate();
@@ -690,7 +646,7 @@ pub fn wndProc(
             return 0;
         },
         c.WM_LBUTTONUP => {
-            const y: i16 = @bitCast(c.hiword(lparam));
+            const y = c.yFromLparam(lparam);
             if (self.rowAtY(y)) |idx| {
                 self.selected = idx;
                 self.activateSelected();

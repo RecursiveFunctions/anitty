@@ -10,7 +10,7 @@ const c = @import("c.zig");
 const log = std.log.scoped(.win32_jumplist);
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
-const aumid = L("com.mitchellh.ghostty");
+const aumid = App.aumid;
 
 pub const Profile = struct {
     name: [:0]const u8,
@@ -24,15 +24,8 @@ pub const Profile = struct {
     }
 };
 
-const GUID = extern struct {
-    data1: u32,
-    data2: u16,
-    data3: u16,
-    data4: [8]u8,
-};
-
 const PROPERTYKEY = extern struct {
-    fmtid: GUID,
+    fmtid: c.GUID,
     pid: c.DWORD,
 };
 
@@ -49,79 +42,75 @@ const VT_LPWSTR: u16 = 31;
 
 const PKEY_Title: PROPERTYKEY = .{
     .fmtid = .{
-        .data1 = 0xF29F85E0,
-        .data2 = 0x4FF9,
-        .data3 = 0x1068,
-        .data4 = .{ 0xAB, 0x91, 0x08, 0x00, 0x2B, 0x27, 0xB3, 0xD9 },
+        .Data1 = 0xF29F85E0,
+        .Data2 = 0x4FF9,
+        .Data3 = 0x1068,
+        .Data4 = .{ 0xAB, 0x91, 0x08, 0x00, 0x2B, 0x27, 0xB3, 0xD9 },
     },
     .pid = 2,
 };
 
-const CLSID_DestinationList: GUID = .{
-    .data1 = 0x77F10CF0,
-    .data2 = 0x3DB5,
-    .data3 = 0x4966,
-    .data4 = .{ 0xB5, 0x20, 0xB7, 0xC5, 0x4F, 0xD3, 0x5E, 0xD6 },
+const CLSID_DestinationList: c.GUID = .{
+    .Data1 = 0x77F10CF0,
+    .Data2 = 0x3DB5,
+    .Data3 = 0x4966,
+    .Data4 = .{ 0xB5, 0x20, 0xB7, 0xC5, 0x4F, 0xD3, 0x5E, 0xD6 },
 };
 
-const IID_ICustomDestinationList: GUID = .{
-    .data1 = 0x6332DEBF,
-    .data2 = 0x87B5,
-    .data3 = 0x4670,
-    .data4 = .{ 0x90, 0xC0, 0x5E, 0x57, 0xB4, 0x08, 0xA4, 0x9E },
+const IID_ICustomDestinationList: c.GUID = .{
+    .Data1 = 0x6332DEBF,
+    .Data2 = 0x87B5,
+    .Data3 = 0x4670,
+    .Data4 = .{ 0x90, 0xC0, 0x5E, 0x57, 0xB4, 0x08, 0xA4, 0x9E },
 };
 
-const CLSID_EnumerableObjectCollection: GUID = .{
-    .data1 = 0x2D3468C1,
-    .data2 = 0x36A7,
-    .data3 = 0x43B6,
-    .data4 = .{ 0xAC, 0x24, 0xD3, 0xF0, 0x2F, 0xD9, 0x60, 0x7A },
+const CLSID_EnumerableObjectCollection: c.GUID = .{
+    .Data1 = 0x2D3468C1,
+    .Data2 = 0x36A7,
+    .Data3 = 0x43B6,
+    .Data4 = .{ 0xAC, 0x24, 0xD3, 0xF0, 0x2F, 0xD9, 0x60, 0x7A },
 };
 
-const IID_IObjectCollection: GUID = .{
-    .data1 = 0x5632B1A4,
-    .data2 = 0xE38A,
-    .data3 = 0x400A,
-    .data4 = .{ 0x92, 0x8A, 0xD4, 0xCD, 0x63, 0x23, 0x02, 0x95 },
+const IID_IObjectCollection: c.GUID = .{
+    .Data1 = 0x5632B1A4,
+    .Data2 = 0xE38A,
+    .Data3 = 0x400A,
+    .Data4 = .{ 0x92, 0x8A, 0xD4, 0xCD, 0x63, 0x23, 0x02, 0x95 },
 };
 
-const IID_IObjectArray: GUID = .{
-    .data1 = 0x92CA9DCD,
-    .data2 = 0x5622,
-    .data3 = 0x4BBA,
-    .data4 = .{ 0xA8, 0x05, 0x5E, 0x9F, 0x54, 0x1B, 0xD8, 0xC9 },
+const IID_IObjectArray: c.GUID = .{
+    .Data1 = 0x92CA9DCD,
+    .Data2 = 0x5622,
+    .Data3 = 0x4BBA,
+    .Data4 = .{ 0xA8, 0x05, 0x5E, 0x9F, 0x54, 0x1B, 0xD8, 0xC9 },
 };
 
-const CLSID_ShellLink: GUID = .{
-    .data1 = 0x00021401,
-    .data2 = 0x0000,
-    .data3 = 0x0000,
-    .data4 = .{ 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 },
+const CLSID_ShellLink: c.GUID = .{
+    .Data1 = 0x00021401,
+    .Data2 = 0x0000,
+    .Data3 = 0x0000,
+    .Data4 = .{ 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 },
 };
 
-const IID_IShellLinkW: GUID = .{
-    .data1 = 0x000214F9,
-    .data2 = 0x0000,
-    .data3 = 0x0000,
-    .data4 = .{ 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 },
+const IID_IShellLinkW: c.GUID = .{
+    .Data1 = 0x000214F9,
+    .Data2 = 0x0000,
+    .Data3 = 0x0000,
+    .Data4 = .{ 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 },
 };
 
-const IID_IPropertyStore: GUID = .{
-    .data1 = 0x886D8EEB,
-    .data2 = 0x8CF2,
-    .data3 = 0x4446,
-    .data4 = .{ 0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99 },
+const IID_IPropertyStore: c.GUID = .{
+    .Data1 = 0x886D8EEB,
+    .Data2 = 0x8CF2,
+    .Data3 = 0x4446,
+    .Data4 = .{ 0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99 },
 };
-
-const CLSCTX_INPROC_SERVER: c.DWORD = 0x1;
-const KEY_READ: c.DWORD = 0x20019;
-const RRF_RT_REG_SZ: c.DWORD = 0x00000002;
 
 const IUnknown = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*IUnknown, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*IUnknown, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*IUnknown) callconv(.winapi) u32,
         Release: *const fn (*IUnknown) callconv(.winapi) u32,
     };
@@ -131,7 +120,7 @@ const IObjectCollection = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*IObjectCollection, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*IObjectCollection, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*IObjectCollection) callconv(.winapi) u32,
         Release: *const fn (*IObjectCollection) callconv(.winapi) u32,
         GetCount: *const fn (*IObjectCollection, *c.UINT) callconv(.winapi) c.HRESULT,
@@ -147,11 +136,11 @@ const ICustomDestinationList = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*ICustomDestinationList, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*ICustomDestinationList, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*ICustomDestinationList) callconv(.winapi) u32,
         Release: *const fn (*ICustomDestinationList) callconv(.winapi) u32,
         SetAppID: *const fn (*ICustomDestinationList, c.LPCWSTR) callconv(.winapi) c.HRESULT,
-        BeginList: *const fn (*ICustomDestinationList, *c.UINT, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        BeginList: *const fn (*ICustomDestinationList, *c.UINT, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AppendCategory: *const fn (*ICustomDestinationList, c.LPCWSTR, *anyopaque) callconv(.winapi) c.HRESULT,
         AppendKnownCategory: *const anyopaque,
         AddUserTasks: *const fn (*ICustomDestinationList, *anyopaque) callconv(.winapi) c.HRESULT,
@@ -166,7 +155,7 @@ const IShellLinkW = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*IShellLinkW, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*IShellLinkW, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*IShellLinkW) callconv(.winapi) u32,
         Release: *const fn (*IShellLinkW) callconv(.winapi) u32,
         GetPath: *const anyopaque,
@@ -194,7 +183,7 @@ const IPropertyStore = extern struct {
     vtable: *const VTable,
 
     const VTable = extern struct {
-        QueryInterface: *const fn (*IPropertyStore, *const GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*IPropertyStore, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*IPropertyStore) callconv(.winapi) u32,
         Release: *const fn (*IPropertyStore) callconv(.winapi) u32,
         GetCount: *const anyopaque,
@@ -204,35 +193,6 @@ const IPropertyStore = extern struct {
         Commit: *const fn (*IPropertyStore) callconv(.winapi) c.HRESULT,
     };
 };
-
-extern "ole32" fn CoCreateInstance(
-    clsid: *const GUID,
-    outer: ?*anyopaque,
-    context: c.DWORD,
-    iid: *const GUID,
-    out: *?*anyopaque,
-) callconv(.winapi) c.HRESULT;
-
-extern "advapi32" fn RegOpenKeyExW(
-    hKey: c.HKEY,
-    lpSubKey: ?c.LPCWSTR,
-    ulOptions: c.DWORD,
-    samDesired: c.DWORD,
-    phkResult: *?c.HKEY,
-) callconv(.winapi) i32;
-
-extern "advapi32" fn RegEnumKeyExW(
-    hKey: c.HKEY,
-    dwIndex: c.DWORD,
-    lpName: [*]u16,
-    lpcchName: *c.DWORD,
-    lpReserved: ?*c.DWORD,
-    lpClass: ?[*]u16,
-    lpcchClass: ?*c.DWORD,
-    lpftLastWriteTime: ?*anyopaque,
-) callconv(.winapi) i32;
-
-extern "advapi32" fn RegCloseKey(hKey: c.HKEY) callconv(.winapi) i32;
 
 pub fn isValidWslDistroName(name: []const u8) bool {
     if (name.len == 0 or name.len > 128 or name[0] == '-') return false;
@@ -364,21 +324,21 @@ pub fn discoverProfiles(alloc: Allocator) !std.ArrayList(Profile) {
 fn discoverWslProfiles(alloc: Allocator, list: *std.ArrayList(Profile)) void {
     if (comptime builtin.os.tag != .windows) return;
     var lxss_key: ?c.HKEY = null;
-    if (RegOpenKeyExW(
+    if (c.RegOpenKeyExW(
         c.HKEY_CURRENT_USER,
         L("Software\\Microsoft\\Windows\\CurrentVersion\\Lxss"),
         0,
-        KEY_READ,
+        c.KEY_READ,
         &lxss_key,
     ) != 0) return;
     const root = lxss_key orelse return;
-    defer _ = RegCloseKey(root);
+    defer _ = c.RegCloseKey(root);
 
     var index: c.DWORD = 0;
     while (index < 64) : (index += 1) {
         var subkey_name: [256]u16 = undefined;
         var subkey_len: c.DWORD = subkey_name.len;
-        if (RegEnumKeyExW(root, index, &subkey_name, &subkey_len, null, null, null, null) != 0) break;
+        if (c.RegEnumKeyExW(root, index, &subkey_name, &subkey_len, null, null, null, null) != 0) break;
         if (subkey_len == 0 or subkey_len >= subkey_name.len) continue;
         subkey_name[subkey_len] = 0;
 
@@ -388,7 +348,7 @@ fn discoverWslProfiles(alloc: Allocator, list: *std.ArrayList(Profile)) void {
             root,
             @ptrCast(&subkey_name),
             L("DistributionName"),
-            RRF_RT_REG_SZ,
+            c.RRF_RT_REG_SZ,
             null,
             &distro_w,
             &distro_bytes,
@@ -419,7 +379,7 @@ fn createShellLink(
     icon_utf8: ?[]const u8,
 ) ?*IShellLinkW {
     var raw_link: ?*anyopaque = null;
-    if (CoCreateInstance(&CLSID_ShellLink, null, CLSCTX_INPROC_SERVER, &IID_IShellLinkW, &raw_link) < 0) return null;
+    if (c.CoCreateInstance(&CLSID_ShellLink, null, c.CLSCTX_INPROC_SERVER, &IID_IShellLinkW, &raw_link) < 0) return null;
     const link: *IShellLinkW = @ptrCast(@alignCast(raw_link orelse return null));
     var ok = false;
     defer if (!ok) {
@@ -475,10 +435,10 @@ pub fn sync(app: *App) void {
     defer alloc.free(exe_w);
 
     var raw_cdl: ?*anyopaque = null;
-    if (CoCreateInstance(
+    if (c.CoCreateInstance(
         &CLSID_DestinationList,
         null,
-        CLSCTX_INPROC_SERVER,
+        c.CLSCTX_INPROC_SERVER,
         &IID_ICustomDestinationList,
         &raw_cdl,
     ) < 0) return;
@@ -499,10 +459,10 @@ pub fn sync(app: *App) void {
     }
 
     var raw_tasks: ?*anyopaque = null;
-    if (CoCreateInstance(
+    if (c.CoCreateInstance(
         &CLSID_EnumerableObjectCollection,
         null,
-        CLSCTX_INPROC_SERVER,
+        c.CLSCTX_INPROC_SERVER,
         &IID_IObjectCollection,
         &raw_tasks,
     ) >= 0) {
@@ -538,10 +498,10 @@ pub fn sync(app: *App) void {
 
     if (profiles.items.len > 0) {
         var raw_prof: ?*anyopaque = null;
-        if (CoCreateInstance(
+        if (c.CoCreateInstance(
             &CLSID_EnumerableObjectCollection,
             null,
-            CLSCTX_INPROC_SERVER,
+            c.CLSCTX_INPROC_SERVER,
             &IID_IObjectCollection,
             &raw_prof,
         ) >= 0) {

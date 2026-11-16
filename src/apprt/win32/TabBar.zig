@@ -7,6 +7,7 @@ const Surface = @import("Surface.zig");
 const Window = @import("Window.zig");
 const c = @import("c.zig");
 
+const dialogs = @import("dialogs.zig");
 const i18n = @import("../../os/main.zig").i18n;
 
 const log = std.log.scoped(.win32);
@@ -193,11 +194,7 @@ fn window(self: *TabBar) *Window {
 
 pub fn height(self: *const TabBar) i32 {
     const hwnd = self.hwnd orelse return 0;
-    return scale(bar_height, c.GetDpiForWindow(hwnd));
-}
-
-fn scale(v: i32, dpi: c.UINT) i32 {
-    return @intCast(@divTrunc(v * @as(i32, @intCast(dpi)), 96));
+    return c.scaleDpi(bar_height, c.GetDpiForWindow(hwnd));
 }
 
 pub fn invalidate(self: *TabBar) void {
@@ -236,7 +233,7 @@ const Layout = struct {
         const count = bar.window().tabs.items.len;
         const avail = @max(0, rect.right - rect.left - h);
         const n: i32 = @intCast(@max(count, 1));
-        const w = std.math.clamp(@divTrunc(avail, n), scale(min_tab_width, dpi), scale(max_tab_width, dpi));
+        const w = std.math.clamp(@divTrunc(avail, n), c.scaleDpi(min_tab_width, dpi), c.scaleDpi(max_tab_width, dpi));
         return .{ .tab_width = w, .count = count, .height = h, .dpi = dpi };
     }
 
@@ -250,8 +247,8 @@ const Layout = struct {
     }
 
     fn closeIn(self: Layout, t: c.RECT) c.RECT {
-        const size = scale(close_size, self.dpi);
-        const right = t.right - scale(tab_padding, self.dpi) + @divTrunc(size - scale(glyph_size, self.dpi), 2);
+        const size = c.scaleDpi(close_size, self.dpi);
+        const right = t.right - c.scaleDpi(tab_padding, self.dpi) + @divTrunc(size - c.scaleDpi(glyph_size, self.dpi), 2);
         const top = @divTrunc(self.height - size, 2);
         return .{ .left = right - size, .top = top, .right = right, .bottom = top + size };
     }
@@ -262,19 +259,15 @@ const Layout = struct {
     }
 
     fn hit(self: Layout, x: i32, y: i32) ?Hit {
-        if (contains(self.new(), x, y)) return .new;
+        if (c.rectContains(self.new(), x, y)) return .new;
         for (0..self.count) |i| {
-            if (!contains(self.tab(i), x, y)) continue;
-            if (contains(self.close(i), x, y)) return .{ .close = i };
+            if (!c.rectContains(self.tab(i), x, y)) continue;
+            if (c.rectContains(self.close(i), x, y)) return .{ .close = i };
             return .{ .tab = i };
         }
         return null;
     }
 };
-
-fn contains(r: c.RECT, x: i32, y: i32) bool {
-    return x >= r.left and x < r.right and y >= r.top and y < r.bottom;
-}
 
 fn hitEql(a: ?Hit, b: ?Hit) bool {
     const x = a orelse return b == null;
@@ -339,7 +332,7 @@ fn draw(self: *TabBar, hdc: c.HDC, rect: c.RECT) void {
     );
     const layout = Layout.init(self) orelse return;
 
-    fill(hdc, rect, palette.bar);
+    c.fillRectColor(hdc, rect, palette.bar);
     _ = c.SetBkMode(hdc, c.TRANSPARENT);
 
     const dragged = self.draggedIndex();
@@ -350,14 +343,14 @@ fn draw(self: *TabBar, hdc: c.HDC, rect: c.RECT) void {
 
     const new = layout.new();
     const new_hovered = if (self.hover) |hv| hv == .new else false;
-    if (new_hovered) fill(hdc, new, palette.hover);
-    cross(hdc, new, if (new_hovered) palette.text else palette.text_inactive, scale(10, layout.dpi), true);
+    if (new_hovered) c.fillRectColor(hdc, new, palette.hover);
+    c.drawCrossGlyph(hdc, new, if (new_hovered) palette.text else palette.text_inactive, c.scaleDpi(10, layout.dpi), true);
 
     if (self.drop_hint) |i| {
         const x = std.math.clamp(layout.tab_width * @as(i32, @intCast(i)), 1, @max(1, rect.right - 2));
-        const half = @max(1, scale(1, layout.dpi));
+        const half = @max(1, c.scaleDpi(1, layout.dpi));
         const inset = @divTrunc(layout.height, 6);
-        fill(hdc, .{ .left = x - half, .top = inset, .right = x + half, .bottom = layout.height - inset }, palette.text);
+        c.fillRectColor(hdc, .{ .left = x - half, .top = inset, .right = x + half, .bottom = layout.height - inset }, palette.text);
     }
 
     if (dragged) |i| {
@@ -380,20 +373,20 @@ fn drawTab(self: *TabBar, hdc: c.HDC, palette: Palette, layout: Layout, i: usize
         .new => false,
     } else false;
     if (active) {
-        fill(hdc, r, palette.active);
+        c.fillRectColor(hdc, r, palette.active);
     } else if (hovered) {
-        fill(hdc, r, palette.hover);
+        c.fillRectColor(hdc, r, palette.hover);
     }
     if (!active and i + 1 != win.active) {
         const inset = @divTrunc(layout.height, 4);
-        line(hdc, palette.separator, 1, r.right - 1, r.top + inset, r.right - 1, r.bottom - inset);
+        c.drawLine(hdc, palette.separator, 1, r.right - 1, r.top + inset, r.right - 1, r.bottom - inset);
     }
 
     const close = layout.closeIn(r);
     var text_rect: c.RECT = .{
-        .left = r.left + scale(tab_padding, layout.dpi),
+        .left = r.left + c.scaleDpi(tab_padding, layout.dpi),
         .top = r.top,
-        .right = close.left - scale(4, layout.dpi),
+        .right = close.left - c.scaleDpi(4, layout.dpi),
         .bottom = r.bottom,
     };
     _ = c.SetTextColor(hdc, if (active) palette.text else palette.text_inactive);
@@ -428,40 +421,9 @@ fn drawTab(self: *TabBar, hdc: c.HDC, palette: Palette, layout: Layout, i: usize
             .close => |idx| idx == i,
             else => false,
         } else false;
-        if (close_hovered) fill(hdc, close, palette.separator);
+        if (close_hovered) c.fillRectColor(hdc, close, palette.separator);
         const color = if (active or close_hovered) palette.text else palette.text_inactive;
-        cross(hdc, close, color, scale(glyph_size, layout.dpi), false);
-    }
-}
-
-fn fill(hdc: c.HDC, rect: c.RECT, color: c.COLORREF) void {
-    const brush = c.CreateSolidBrush(color) orelse return;
-    defer _ = c.DeleteObject(brush);
-    _ = c.FillRect(hdc, &rect, brush);
-}
-
-fn line(hdc: c.HDC, color: c.COLORREF, width: c_int, x0: i32, y0: i32, x1: i32, y1: i32) void {
-    const pen = c.CreatePen(c.PS_SOLID, width, color) orelse return;
-    defer _ = c.DeleteObject(pen);
-    const old = c.SelectObject(hdc, pen);
-    defer if (old) |o| {
-        _ = c.SelectObject(hdc, o);
-    };
-    _ = c.MoveToEx(hdc, x0, y0, null);
-    _ = c.LineTo(hdc, x1, y1);
-}
-
-fn cross(hdc: c.HDC, r: c.RECT, color: c.COLORREF, size: i32, plus: bool) void {
-    const cx = @divTrunc(r.left + r.right, 2);
-    const cy = @divTrunc(r.top + r.bottom, 2);
-    const half = @divTrunc(size, 2);
-    const width: c_int = @max(1, @divTrunc(size, 8));
-    if (plus) {
-        line(hdc, color, width, cx - half, cy, cx + half + 1, cy);
-        line(hdc, color, width, cx, cy - half, cx, cy + half + 1);
-    } else {
-        line(hdc, color, width, cx - half, cy - half, cx + half + 1, cy + half + 1);
-        line(hdc, color, width, cx + half, cy - half, cx - half - 1, cy + half + 1);
+        c.drawCrossGlyph(hdc, close, color, c.scaleDpi(glyph_size, layout.dpi), false);
     }
 }
 
@@ -522,19 +484,7 @@ fn updateTooltip(self: *TabBar, hit: ?Hit) void {
 
 fn hitAt(self: *TabBar, lparam: c.LPARAM) ?Hit {
     const layout = Layout.init(self) orelse return null;
-    const x: i16 = @bitCast(c.loword(lparam));
-    const y: i16 = @bitCast(c.hiword(lparam));
-    return layout.hit(x, y);
-}
-
-fn xOf(lparam: c.LPARAM) i32 {
-    const x: i16 = @bitCast(c.loword(lparam));
-    return x;
-}
-
-fn yOf(lparam: c.LPARAM) i32 {
-    const y: i16 = @bitCast(c.hiword(lparam));
-    return y;
+    return layout.hit(c.xFromLparam(lparam), c.yFromLparam(lparam));
 }
 
 fn dragLeft(layout: Layout, left: i32) i32 {
@@ -573,8 +523,8 @@ fn beginDrag(self: *TabBar, hwnd: c.HWND, index: usize, x: i32, y: i32) void {
 
 fn dragTo(self: *TabBar, hwnd: c.HWND, lparam: c.LPARAM) void {
     const d = &(self.drag orelse return);
-    const x = xOf(lparam);
-    const y = yOf(lparam);
+    const x = c.xFromLparam(lparam);
+    const y = c.yFromLparam(lparam);
     var pt: c.POINT = .{ .x = x, .y = y };
     _ = c.ClientToScreen(hwnd, &pt);
     if (d.float != null) return self.floatTo(pt);
@@ -673,7 +623,7 @@ fn windowUnder(app: *App, pt: c.POINT, skip: c.HWND) ?*Window {
         var cloaked: c.DWORD = 0;
         if (c.DwmGetWindowAttribute(h, c.DWMWA_CLOAKED, &cloaked, @sizeOf(c.DWORD)) == 0 and cloaked != 0) continue;
         var r: c.RECT = .{};
-        if (!c.GetWindowRect(h, &r).toBool() or !contains(r, pt.x, pt.y)) continue;
+        if (!c.GetWindowRect(h, &r).toBool() or !c.rectContains(r, pt.x, pt.y)) continue;
         for (app.windows.items) |w| if (w.hwnd == h) return w;
         return null;
     }
@@ -702,7 +652,7 @@ fn release(self: *TabBar, hwnd: c.HWND, lparam: c.LPARAM) void {
     const d = self.drag orelse return;
     if (d.float != null) return self.endDrag(true);
     if (!d.moving) return self.endDrag(true);
-    var pt: c.POINT = .{ .x = xOf(lparam), .y = @as(i16, @bitCast(c.hiword(lparam))) };
+    var pt = c.pointFromLparam(lparam);
     _ = c.ClientToScreen(hwnd, &pt);
     if (!self.outside(hwnd, pt)) return self.endDrag(true);
     const index = self.dragIndex(d) orelse return self.endDrag(false);
@@ -716,7 +666,7 @@ fn outside(self: *TabBar, hwnd: c.HWND, pt: c.POINT) bool {
     var win: c.RECT = .{};
     _ = c.GetWindowRect(hwnd, &bar);
     _ = c.GetWindowRect(win_hwnd, &win);
-    if (!contains(win, pt.x, pt.y)) return true;
+    if (!c.rectContains(win, pt.x, pt.y)) return true;
     const top = if (c.WindowFromPoint(pt)) |h| c.GetAncestor(h, c.GA_ROOT) else null;
     if (top != win_hwnd) return true;
     const margin = 2 * (bar.bottom - bar.top);
@@ -742,7 +692,7 @@ pub fn dropIndex(self: *TabBar, pt: c.POINT) ?usize {
     _ = c.GetWindowRect(win_hwnd, &r);
     var origin: c.POINT = .{};
     _ = c.ClientToScreen(win_hwnd, &origin);
-    if (!contains(r, pt.x, pt.y) or pt.y >= origin.y + self.height()) return null;
+    if (!c.rectContains(r, pt.x, pt.y) or pt.y >= origin.y + self.height()) return null;
     return count;
 }
 
@@ -809,10 +759,10 @@ pub fn startRename(self: *TabBar, index: usize) void {
     const surface = win.tabs.items[index].focused;
     const tab_rect = layout.tab(index);
     const close_rect = layout.closeIn(tab_rect);
-    const pad = scale(tab_padding, layout.dpi);
+    const pad = c.scaleDpi(tab_padding, layout.dpi);
     const left = tab_rect.left + pad;
-    const right = @max(left + scale(24, layout.dpi), close_rect.left - scale(4, layout.dpi));
-    const edit_h = @max(16, layout.height - scale(10, layout.dpi));
+    const right = @max(left + c.scaleDpi(24, layout.dpi), close_rect.left - c.scaleDpi(4, layout.dpi));
+    const edit_h = @max(16, layout.height - c.scaleDpi(10, layout.dpi));
     const top = @divTrunc(layout.height - edit_h, 2);
 
     const alloc = win.app.core_app.alloc;
@@ -836,16 +786,11 @@ pub fn commitRename(self: *TabBar) void {
     const win = self.window();
     const alloc = win.app.core_app.alloc;
 
-    const len: usize = @intCast(@max(0, c.GetWindowTextLengthW(edit)));
-    if (alloc.allocSentinel(u16, len, 0)) |wide| {
-        defer alloc.free(wide);
-        const n: usize = @intCast(@max(0, c.GetWindowTextW(edit, wide.ptr, @intCast(len + 1))));
-        if (std.unicode.utf16LeToUtf8AllocZ(alloc, wide[0..n])) |utf8| {
-            defer alloc.free(utf8);
-            win.setTabTitle(surface, utf8) catch |err| {
-                log.warn("error setting tab title err={}", .{err});
-            };
-        } else |_| {}
+    if (c.getWindowTextUtf8(alloc, edit)) |utf8| {
+        defer alloc.free(utf8);
+        win.setTabTitle(surface, utf8) catch |err| {
+            log.warn("error setting tab title err={}", .{err});
+        };
     } else |_| {}
 
     _ = c.ShowWindow(edit, c.SW_HIDE);
@@ -873,9 +818,7 @@ fn editSubclassProc(
     wparam: c.WPARAM,
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *TabBar = @ptrFromInt(ptr);
+    const self = c.userData(TabBar, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     const orig = self.orig_edit_proc orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
@@ -905,9 +848,7 @@ fn appendMenuItem(
     label_utf8: [*:0]const u8,
     fallback: [:0]const u16,
 ) void {
-    const wide = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(label_utf8)) catch null;
-    defer if (wide) |w| alloc.free(w);
-    _ = c.AppendMenuW(menu, flags, @backingInt(cmd), if (wide) |w| w.ptr else fallback.ptr);
+    dialogs.appendMenuUtf8(alloc, menu, flags, @backingInt(cmd), label_utf8, fallback);
 }
 
 fn showContextMenu(self: *TabBar, hwnd: c.HWND, pt_client: c.POINT) void {
@@ -986,16 +927,12 @@ pub fn wndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *TabBar = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(TabBar, hwnd, lparam);
         self.hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *TabBar = @ptrFromInt(ptr);
+    const self = c.userData(TabBar, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         c.WM_PAINT => {
@@ -1046,10 +983,7 @@ pub fn wndProc(
                 if (wparam & c.MK_LBUTTON != 0) self.dragTo(hwnd, lparam);
                 return 0;
             }
-            if (!self.tracking) {
-                var tme: c.TRACKMOUSEEVENT = .{ .dwFlags = c.TME_LEAVE, .hwndTrack = hwnd };
-                if (c.TrackMouseEvent(&tme).toBool()) self.tracking = true;
-            }
+            c.trackMouseLeave(hwnd, &self.tracking);
             self.setHover(self.hitAt(lparam));
             return 0;
         },
@@ -1067,7 +1001,7 @@ pub fn wndProc(
             switch (hit) {
                 .tab => |i| {
                     win.selectTab(i);
-                    self.beginDrag(hwnd, i, xOf(lparam), yOf(lparam));
+                    self.beginDrag(hwnd, i, c.xFromLparam(lparam), c.yFromLparam(lparam));
                 },
                 .close => |i| win.closeTabAt(i),
                 .new => win.newTab(null),
@@ -1092,12 +1026,12 @@ pub fn wndProc(
         },
 
         c.WM_RBUTTONUP => {
-            self.showContextMenu(hwnd, .{ .x = xOf(lparam), .y = yOf(lparam) });
+            self.showContextMenu(hwnd, c.pointFromLparam(lparam));
             return 0;
         },
 
         c.WM_CONTEXTMENU => {
-            var pt: c.POINT = .{ .x = xOf(lparam), .y = yOf(lparam) };
+            var pt = c.pointFromLparam(lparam);
             if (pt.x == -1 and pt.y == -1) {
                 if (Layout.init(self)) |layout| {
                     const win = self.window();

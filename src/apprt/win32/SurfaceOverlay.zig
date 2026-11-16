@@ -17,11 +17,11 @@ const c = @import("c.zig");
 const log = std.log.scoped(.win32);
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
-pub const banner_class_name = L("GhosttyChildBanner");
-pub const pill_class_name = L("GhosttyStatusPill");
-pub const scrollbar_class_name = L("GhosttyScrollbar");
-pub const dim_class_name = L("GhosttySplitDim");
-pub const resize_class_name = L("GhosttyResizeOverlay");
+pub const banner_class_name = L("AnittyChildBanner");
+pub const pill_class_name = L("AnittyStatusPill");
+pub const scrollbar_class_name = L("AnittyScrollbar");
+pub const dim_class_name = L("AnittySplitDim");
+pub const resize_class_name = L("AnittyResizeOverlay");
 
 const banner_height = 34;
 const banner_btn_w = 64;
@@ -77,10 +77,6 @@ fn surface(self: *SurfaceOverlay) *Surface {
     return @alignCast(@fieldParentPtr("overlay", self));
 }
 
-fn scale(v: i32, dpi: c.UINT) i32 {
-    return @intCast(@divTrunc(v * @as(i32, @intCast(dpi)), 96));
-}
-
 pub fn create(self: *SurfaceOverlay, parent: c.HWND, instance: ?c.HINSTANCE) !void {
     self.banner_hwnd = c.CreateWindowExW(
         0,
@@ -128,7 +124,7 @@ pub fn create(self: *SurfaceOverlay, parent: c.HWND, instance: ?c.HINSTANCE) !vo
     ) orelse return error.CreateWindowFailed;
 
     self.dim_hwnd = c.CreateWindowExW(
-        c.WS_EX_LAYERED | @as(c.DWORD, @truncate(c.WS_EX_TRANSPARENT)),
+        c.WS_EX_LAYERED | c.WS_EX_TRANSPARENT,
         dim_class_name,
         null,
         c.WS_CHILD | c.WS_CLIPSIBLINGS,
@@ -143,7 +139,7 @@ pub fn create(self: *SurfaceOverlay, parent: c.HWND, instance: ?c.HINSTANCE) !vo
     ) orelse return error.CreateWindowFailed;
 
     self.resize_hwnd = c.CreateWindowExW(
-        @as(c.DWORD, @truncate(c.WS_EX_TRANSPARENT)),
+        c.WS_EX_TRANSPARENT,
         resize_class_name,
         null,
         c.WS_CHILD | c.WS_CLIPSIBLINGS,
@@ -182,7 +178,7 @@ pub fn updateFont(self: *SurfaceOverlay) void {
 
 pub fn topBannerHeight(self: *const SurfaceOverlay, dpi: c.UINT) i32 {
     if (self.child_exited == null) return 0;
-    return scale(banner_height, dpi);
+    return c.scaleDpi(banner_height, dpi);
 }
 
 pub fn setChildExited(self: *SurfaceOverlay, data: apprt.surface.Message.ChildExited) bool {
@@ -451,10 +447,10 @@ fn layoutResize(self: *SurfaceOverlay) void {
     const parent_w: i32 = @intCast(s.size.width);
     const parent_h: i32 = @intCast(s.size.height);
     const top_inset = self.topBannerHeight(dpi);
-    const m = scale(resize_margin, dpi);
-    const h = scale(resize_height, dpi);
-    const char_w = @max(6, scale(8, dpi));
-    const desired_w = @max(scale(84, dpi), @as(i32, @intCast(self.resize_len)) * char_w + scale(24, dpi));
+    const m = c.scaleDpi(resize_margin, dpi);
+    const h = c.scaleDpi(resize_height, dpi);
+    const char_w = @max(6, c.scaleDpi(8, dpi));
+    const desired_w = @max(c.scaleDpi(84, dpi), @as(i32, @intCast(self.resize_len)) * char_w + c.scaleDpi(24, dpi));
     const r = computeResizeOverlayRect(
         parent_w,
         parent_h,
@@ -504,11 +500,11 @@ fn layoutPill(self: *SurfaceOverlay) void {
     const dpi = c.GetDpiForWindow(hwnd);
     const parent_w: i32 = @intCast(s.size.width);
     const parent_h: i32 = @intCast(s.size.height);
-    const m = scale(pill_margin, dpi);
-    const h = scale(pill_height, dpi);
-    const char_w = @max(6, scale(7, dpi));
-    const desired_w = @as(i32, @intCast(self.pill_len)) * char_w + scale(20, dpi);
-    const w = std.math.clamp(desired_w, scale(64, dpi), @max(scale(64, dpi), parent_w - m * 2));
+    const m = c.scaleDpi(pill_margin, dpi);
+    const h = c.scaleDpi(pill_height, dpi);
+    const char_w = @max(6, c.scaleDpi(7, dpi));
+    const desired_w = @as(i32, @intCast(self.pill_len)) * char_w + c.scaleDpi(20, dpi);
+    const w = std.math.clamp(desired_w, c.scaleDpi(64, dpi), @max(c.scaleDpi(64, dpi), parent_w - m * 2));
     const top = @max(m, parent_h - h - m);
     const cursor_in_left = s.cursor_pos.x >= 0 and s.cursor_pos.x < @as(f64, @floatFromInt(w + m * 2)) and
         s.cursor_pos.y >= @as(f64, @floatFromInt(top - m));
@@ -521,7 +517,7 @@ fn layoutScrollbar(self: *SurfaceOverlay) void {
     const s = self.surface();
     if (s.app.config.scrollbar == .never or self.scrollbar.total <= self.scrollbar.len) return;
     const dpi = c.GetDpiForWindow(hwnd);
-    const sw = scale(scrollbar_width, dpi);
+    const sw = c.scaleDpi(scrollbar_width, dpi);
     const top_inset = self.topBannerHeight(dpi);
     const w: i32 = @intCast(s.size.width);
     const h: i32 = @intCast(s.size.height);
@@ -568,9 +564,9 @@ fn closeButtonRect(hwnd: c.HWND) c.RECT {
     var r: c.RECT = .{};
     _ = c.GetClientRect(hwnd, &r);
     const dpi = c.GetDpiForWindow(hwnd);
-    const bw = scale(banner_btn_w, dpi);
-    const bh = scale(banner_btn_h, dpi);
-    const right = r.right - scale(10, dpi);
+    const bw = c.scaleDpi(banner_btn_w, dpi);
+    const bh = c.scaleDpi(banner_btn_h, dpi);
+    const right = r.right - c.scaleDpi(10, dpi);
     const top = @divTrunc((r.bottom - r.top) - bh, 2);
     return .{ .left = right - bw, .top = top, .right = right, .bottom = top + bh };
 }
@@ -604,8 +600,8 @@ fn paintBanner(self: *SurfaceOverlay, hwnd: c.HWND) void {
     const border: c.COLORREF = if (exited.exit_code == 0) 0x00488838 else 0x004040A8;
     const text_color: c.COLORREF = 0x00F0F0F0;
 
-    fill(mem, rect, bg);
-    fill(mem, .{ .left = 0, .top = h - 1, .right = w, .bottom = h }, border);
+    c.fillRectColor(mem, rect, bg);
+    c.fillRectColor(mem, .{ .left = 0, .top = h - 1, .right = w, .bottom = h }, border);
 
     _ = c.SetBkMode(mem, c.TRANSPARENT);
     _ = c.SetTextColor(mem, text_color);
@@ -621,9 +617,9 @@ fn paintBanner(self: *SurfaceOverlay, hwnd: c.HWND) void {
     var wide_buf: [160]u16 = undefined;
     if (std.unicode.utf8ToUtf16Le(&wide_buf, msg_utf8)) |n| {
         var text_r: c.RECT = .{
-            .left = scale(12, dpi),
+            .left = c.scaleDpi(12, dpi),
             .top = 0,
-            .right = btn.left - scale(8, dpi),
+            .right = btn.left - c.scaleDpi(8, dpi),
             .bottom = h,
         };
         _ = c.DrawTextW(
@@ -635,8 +631,8 @@ fn paintBanner(self: *SurfaceOverlay, hwnd: c.HWND) void {
         );
     } else |_| {}
 
-    fill(mem, btn, if (self.banner_hover_close) border else bg);
-    drawRectBorder(mem, btn, border);
+    c.fillRectColor(mem, btn, if (self.banner_hover_close) border else bg);
+    c.drawRectBorder(mem, btn, border);
     var btn_r = btn;
     const close_w = L("Close");
     _ = c.DrawTextW(
@@ -665,8 +661,8 @@ fn paintPill(self: *SurfaceOverlay, hwnd: c.HWND) void {
     const palette = TabBar.Palette.init(&s.app.config);
     const dpi = c.GetDpiForWindow(hwnd);
 
-    fill(hdc, rect, palette.bar);
-    drawRectBorder(hdc, rect, palette.separator);
+    c.fillRectColor(hdc, rect, palette.bar);
+    c.drawRectBorder(hdc, rect, palette.separator);
 
     const old_font = if (self.font) |f| c.SelectObject(hdc, f) else null;
     defer if (old_font) |o| {
@@ -678,9 +674,9 @@ fn paintPill(self: *SurfaceOverlay, hwnd: c.HWND) void {
     var wide_buf: [512]u16 = undefined;
     if (std.unicode.utf8ToUtf16Le(&wide_buf, self.pill_text[0..self.pill_len])) |n| {
         var tr: c.RECT = .{
-            .left = scale(8, dpi),
+            .left = c.scaleDpi(8, dpi),
             .top = 0,
-            .right = w - scale(8, dpi),
+            .right = w - c.scaleDpi(8, dpi),
             .bottom = h,
         };
         _ = c.DrawTextW(
@@ -707,40 +703,20 @@ fn paintScrollbar(self: *SurfaceOverlay, hwnd: c.HWND) void {
     const s = self.surface();
     const palette = TabBar.Palette.init(&s.app.config);
     const dpi = c.GetDpiForWindow(hwnd);
-    fill(hdc, rect, palette.active);
+    c.fillRectColor(hdc, rect, palette.active);
 
-    const range = thumbRange(h, scale(min_thumb_height, dpi), self.scrollbar);
+    const range = thumbRange(h, c.scaleDpi(min_thumb_height, dpi), self.scrollbar);
     const thumb_color = if (self.scrollbar_dragging or self.scrollbar_hover)
         palette.text_inactive
     else
         palette.separator;
-    const inset = @max(1, scale(1, dpi));
-    fill(hdc, .{
+    const inset = @max(1, c.scaleDpi(1, dpi));
+    c.fillRectColor(hdc, .{
         .left = inset,
         .top = range.top,
         .right = @max(inset + 1, w - inset),
         .bottom = range.bottom,
     }, thumb_color);
-}
-
-fn fill(hdc: c.HDC, rect: c.RECT, color: c.COLORREF) void {
-    const brush = c.CreateSolidBrush(color) orelse return;
-    defer _ = c.DeleteObject(brush);
-    _ = c.FillRect(hdc, &rect, brush);
-}
-
-fn drawRectBorder(hdc: c.HDC, r: c.RECT, color: c.COLORREF) void {
-    const pen = c.CreatePen(c.PS_SOLID, 1, color) orelse return;
-    defer _ = c.DeleteObject(pen);
-    const old = c.SelectObject(hdc, pen);
-    defer if (old) |o| {
-        _ = c.SelectObject(hdc, o);
-    };
-    _ = c.MoveToEx(hdc, r.left, r.top, null);
-    _ = c.LineTo(hdc, r.right - 1, r.top);
-    _ = c.LineTo(hdc, r.right - 1, r.bottom - 1);
-    _ = c.LineTo(hdc, r.left, r.bottom - 1);
-    _ = c.LineTo(hdc, r.left, r.top);
 }
 
 pub fn bannerWndProc(
@@ -750,16 +726,12 @@ pub fn bannerWndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *SurfaceOverlay = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(SurfaceOverlay, hwnd, lparam);
         self.banner_hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *SurfaceOverlay = @ptrFromInt(ptr);
+    const self = c.userData(SurfaceOverlay, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         c.WM_PAINT => {
@@ -768,14 +740,8 @@ pub fn bannerWndProc(
         },
         c.WM_ERASEBKGND => return 1,
         c.WM_MOUSEMOVE => {
-            if (!self.banner_tracking) {
-                var tme: c.TRACKMOUSEEVENT = .{ .dwFlags = c.TME_LEAVE, .hwndTrack = hwnd };
-                if (c.TrackMouseEvent(&tme).toBool()) self.banner_tracking = true;
-            }
-            const x: i16 = @bitCast(c.loword(lparam));
-            const y: i16 = @bitCast(c.hiword(lparam));
-            const btn = closeButtonRect(hwnd);
-            const over = x >= btn.left and x < btn.right and y >= btn.top and y < btn.bottom;
+            c.trackMouseLeave(hwnd, &self.banner_tracking);
+            const over = c.rectContains(closeButtonRect(hwnd), c.xFromLparam(lparam), c.yFromLparam(lparam));
             if (over != self.banner_hover_close) {
                 self.banner_hover_close = over;
                 _ = c.InvalidateRect(hwnd, null, .FALSE);
@@ -791,10 +757,7 @@ pub fn bannerWndProc(
             return 0;
         },
         c.WM_LBUTTONUP => {
-            const x: i16 = @bitCast(c.loword(lparam));
-            const y: i16 = @bitCast(c.hiword(lparam));
-            const btn = closeButtonRect(hwnd);
-            if (x >= btn.left and x < btn.right and y >= btn.top and y < btn.bottom) {
+            if (c.rectContains(closeButtonRect(hwnd), c.xFromLparam(lparam), c.yFromLparam(lparam))) {
                 self.surface().close(false);
             }
             return 0;
@@ -816,16 +779,12 @@ pub fn pillWndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *SurfaceOverlay = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(SurfaceOverlay, hwnd, lparam);
         self.pill_hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *SurfaceOverlay = @ptrFromInt(ptr);
+    const self = c.userData(SurfaceOverlay, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         c.WM_PAINT => {
@@ -858,8 +817,8 @@ fn paintResize(self: *SurfaceOverlay, hwnd: c.HWND) void {
     const palette = TabBar.Palette.init(&s.app.config);
     const dpi = c.GetDpiForWindow(hwnd);
 
-    fill(hdc, rect, palette.bar);
-    drawRectBorder(hdc, rect, palette.separator);
+    c.fillRectColor(hdc, rect, palette.bar);
+    c.drawRectBorder(hdc, rect, palette.separator);
 
     const old_font = if (self.font) |f| c.SelectObject(hdc, f) else null;
     defer if (old_font) |o| {
@@ -871,9 +830,9 @@ fn paintResize(self: *SurfaceOverlay, hwnd: c.HWND) void {
     var wide_buf: [32]u16 = undefined;
     if (std.unicode.utf8ToUtf16Le(&wide_buf, self.resize_text[0..self.resize_len])) |n| {
         var tr: c.RECT = .{
-            .left = scale(8, dpi),
+            .left = c.scaleDpi(8, dpi),
             .top = 0,
-            .right = w - scale(8, dpi),
+            .right = w - c.scaleDpi(8, dpi),
             .bottom = h,
         };
         _ = c.DrawTextW(
@@ -893,16 +852,12 @@ pub fn resizeWndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *SurfaceOverlay = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(SurfaceOverlay, hwnd, lparam);
         self.resize_hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *SurfaceOverlay = @ptrFromInt(ptr);
+    const self = c.userData(SurfaceOverlay, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         c.WM_PAINT => {
@@ -934,16 +889,12 @@ pub fn dimWndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *SurfaceOverlay = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(SurfaceOverlay, hwnd, lparam);
         self.dim_hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *SurfaceOverlay = @ptrFromInt(ptr);
+    const self = c.userData(SurfaceOverlay, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         c.WM_PAINT => {
@@ -955,7 +906,7 @@ pub fn dimWndProc(
             const s = self.surface();
             const cfg = &s.app.config;
             const col = cfg.@"unfocused-split-fill" orelse cfg.background;
-            fill(hdc, r, Window.Chrome.colorRef(col));
+            c.fillRectColor(hdc, r, Window.Chrome.colorRef(col));
             return 0;
         },
         c.WM_ERASEBKGND => return 1,
@@ -976,16 +927,12 @@ pub fn scrollbarWndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *SurfaceOverlay = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(SurfaceOverlay, hwnd, lparam);
         self.scrollbar_hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *SurfaceOverlay = @ptrFromInt(ptr);
+    const self = c.userData(SurfaceOverlay, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         c.WM_PAINT => {
@@ -1001,17 +948,14 @@ pub fn scrollbarWndProc(
             return 0;
         },
         c.WM_MOUSEMOVE => {
-            if (!self.scrollbar_tracking) {
-                var tme: c.TRACKMOUSEEVENT = .{ .dwFlags = c.TME_LEAVE, .hwndTrack = hwnd };
-                if (c.TrackMouseEvent(&tme).toBool()) self.scrollbar_tracking = true;
-            }
+            c.trackMouseLeave(hwnd, &self.scrollbar_tracking);
             if (!self.scrollbar_hover) {
                 self.scrollbar_hover = true;
                 _ = c.KillTimer(hwnd, scrollbar_hide_timer_id);
                 _ = c.InvalidateRect(hwnd, null, .FALSE);
             }
             if (self.scrollbar_dragging) {
-                const y: i16 = @bitCast(c.hiword(lparam));
+                const y = c.yFromLparam(lparam);
                 self.scrollToMouseY(hwnd, y - self.scrollbar_drag_grab);
             }
             return 0;
@@ -1026,12 +970,12 @@ pub fn scrollbarWndProc(
             return 0;
         },
         c.WM_LBUTTONDOWN => {
-            const y: i16 = @bitCast(c.hiword(lparam));
+            const y = c.yFromLparam(lparam);
             var r: c.RECT = .{};
             _ = c.GetClientRect(hwnd, &r);
             const h = r.bottom - r.top;
             const dpi = c.GetDpiForWindow(hwnd);
-            const range = thumbRange(h, scale(min_thumb_height, dpi), self.scrollbar);
+            const range = thumbRange(h, c.scaleDpi(min_thumb_height, dpi), self.scrollbar);
             const thumb_h = range.bottom - range.top;
             self.scrollbar_dragging = true;
             if (y >= range.top and y < range.bottom) {
@@ -1074,7 +1018,7 @@ fn scrollToMouseY(self: *SurfaceOverlay, hwnd: c.HWND, target_top: i32) void {
     _ = c.GetClientRect(hwnd, &r);
     const h = r.bottom - r.top;
     const dpi = c.GetDpiForWindow(hwnd);
-    const range = thumbRange(h, scale(min_thumb_height, dpi), self.scrollbar);
+    const range = thumbRange(h, c.scaleDpi(min_thumb_height, dpi), self.scrollbar);
     const row = rowFromThumbTop(h, range.bottom - range.top, target_top, self.scrollbar);
     _ = s.core_surface.performBindingAction(.{ .scroll_to_row = row }) catch |err| {
         log.warn("error performing scroll_to_row err={}", .{err});

@@ -4,8 +4,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const Allocator = std.mem.Allocator;
-const windows = std.os.windows;
+const windows = @import("../os/windows.zig");
 const global = @import("../global.zig");
 
 pub const HRESULT = c_long;
@@ -14,13 +13,7 @@ pub const FLOAT = f32;
 pub const WCHAR = u16;
 pub const BOOL = windows.BOOL;
 pub const HMODULE = windows.HMODULE;
-
-pub const GUID = extern struct {
-    Data1: u32,
-    Data2: u16,
-    Data3: u16,
-    Data4: [8]u8,
-};
+pub const GUID = windows.GUID;
 
 // {B859EE5A-D838-4B5B-A2E8-1ADC7D93DB48}
 pub const IID_IDWriteFactory = GUID{
@@ -30,7 +23,7 @@ pub const IID_IDWriteFactory = GUID{
     .Data4 = .{ 0xa2, 0xe8, 0x1a, 0xdc, 0x7d, 0x93, 0xdb, 0x48 },
 };
 
-// {31EF2DA0-2EC3-40B4-A834-B48C52E10018}
+// {0439FC60-CA44-4994-8DEE-3A9AF7B732EC}
 pub const IID_IDWriteFactory2 = GUID{
     .Data1 = 0x0439fc60,
     .Data2 = 0xca44,
@@ -318,15 +311,10 @@ pub const StackAnalysisSource = extern struct {
 };
 
 const DWriteCreateFactoryFn = *const fn (
-    factory_type: DWRITE_FONT_STYLE,
+    factory_type: DWRITE_FACTORY_TYPE,
     iid: *const GUID,
     factory: *?*anyopaque,
 ) callconv(.winapi) HRESULT;
-
-extern "kernel32" fn LoadLibraryExW(name: [*:0]const u16, hFile: ?*anyopaque, flags: u32) callconv(.winapi) ?HMODULE;
-extern "kernel32" fn GetProcAddress(module: HMODULE, name: [*:0]const u8) callconv(.winapi) ?*const anyopaque;
-
-const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x00000800;
 
 var dwrite_lock: std.Io.Mutex = .init;
 var cached_fallback: ?*IDWriteFontFallback = null;
@@ -338,23 +326,19 @@ fn getSystemFontFallback() ?*IDWriteFontFallback {
     if (cached_fallback) |fb| return fb;
     if (dwrite_init_failed) return null;
 
-    const dwrite_mod = LoadLibraryExW(
+    const dwrite_mod = windows.exp.kernel32.LoadLibraryExW(
         std.unicode.utf8ToUtf16LeStringLiteral("dwrite.dll"),
         null,
-        LOAD_LIBRARY_SEARCH_SYSTEM32,
+        windows.LOAD_LIBRARY_SEARCH_SYSTEM32,
     ) orelse {
         dwrite_init_failed = true;
         return null;
     };
-    const create_fn_ptr = GetProcAddress(dwrite_mod, "DWriteCreateFactory") orelse {
+    const create_fn_ptr = windows.exp.kernel32.GetProcAddress(dwrite_mod, "DWriteCreateFactory") orelse {
         dwrite_init_failed = true;
         return null;
     };
-    const createFactory: *const fn (
-        DWRITE_FACTORY_TYPE,
-        *const GUID,
-        *?*anyopaque,
-    ) callconv(.winapi) HRESULT = @ptrCast(create_fn_ptr);
+    const createFactory: DWriteCreateFactoryFn = @ptrCast(create_fn_ptr);
 
     var raw_factory: ?*anyopaque = null;
     if (createFactory(.SHARED, &IID_IDWriteFactory2, &raw_factory) < 0) {

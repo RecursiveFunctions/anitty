@@ -20,7 +20,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $Prefix = (Resolve-Path $Prefix).Path
-$exe = Join-Path $Prefix "bin\ghostty.exe"
+$exe = Join-Path $Prefix "bin\anitty.exe"
 
 $themesDir = Join-Path $Prefix "share\ghostty\themes"
 if (-not (Test-Path $themesDir)) {
@@ -67,9 +67,9 @@ if (-not $Version) {
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
-$name = "ghostty-$Version-windows-$Arch"
+$name = "anitty-$Version-windows-$Arch"
 $staging = Join-Path $OutDir "staging"
-$root = Join-Path $staging "ghostty"
+$root = Join-Path $staging "anitty"
 
 if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
 New-Item -ItemType Directory -Force (Join-Path $root "bin") | Out-Null

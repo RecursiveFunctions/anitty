@@ -2,10 +2,10 @@
 LANGUAGE 0, 0
 
 #define RT_MANIFEST 1
-RT_MANIFEST 24 "ghostty.manifest"
+RT_MANIFEST 24 "anitty.manifest"
 
-#define ID_ICON_GHOSTTY 1
-ID_ICON_GHOSTTY ICON "ghostty.ico"
+#define ID_ICON_ANITTY 1
+ID_ICON_ANITTY ICON "anitty.ico"
 
 #ifndef VERSION_MAJOR
 #define VERSION_MAJOR 0
@@ -41,13 +41,13 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-        VALUE "CompanyName",        "Ghostty for Windows contributors"
-        VALUE "FileDescription",    "Ghostty Terminal"
+        VALUE "CompanyName",        "Anitty contributors"
+        VALUE "FileDescription",    "Anitty Terminal"
         VALUE "FileVersion",        VERSION_STRING
-        VALUE "InternalName",       "ghostty"
-        VALUE "LegalCopyright",     "Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors; Copyright (c) 2026 Josh Auriemma"
-        VALUE "OriginalFilename",   "ghostty.exe"
-        VALUE "ProductName",        "Ghostty"
+        VALUE "InternalName",       "anitty"
+        VALUE "LegalCopyright",     "Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors; Copyright (c) 2026 Josh Auriemma; Copyright (c) 2026 RecursiveFunctions"
+        VALUE "OriginalFilename",   "anitty.exe"
+        VALUE "ProductName",        "Anitty"
         VALUE "ProductVersion",     VERSION_STRING
         END
     END

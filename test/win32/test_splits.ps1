@@ -1,12 +1,12 @@
 param(
-    [string]$GhosttyExe = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'zig-out/bin/ghostty.exe')
+    [string]$GhosttyExe = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'zig-out/bin/anitty.exe')
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path -LiteralPath $GhosttyExe)) {
-    throw "ghostty.exe not found at $GhosttyExe"
+    throw "anitty.exe not found at $GhosttyExe"
 }
 
 Add-Type -TypeDefinition @"
@@ -64,7 +64,7 @@ public static class SplitTestNative {
             GetWindowThreadProcessId(hWnd, out pid);
             if (pid == expectedPid &&
                 IsWindowVisible(hWnd) &&
-                string.Equals(ClassName(hWnd), "GhosttySurface", StringComparison.OrdinalIgnoreCase))
+                string.Equals(ClassName(hWnd), "AnittySurface", StringComparison.OrdinalIgnoreCase))
             {
                 list.Add(hWnd);
             }
@@ -110,7 +110,7 @@ try {
     Start-Sleep -Milliseconds 500
 
     $vis = [SplitTestNative]::VisibleSurfaces($winHwnd, $expectedPid)
-    if ($vis.Count -ne 1) { throw "Expected 1 initial visible GhosttySurface, got $($vis.Count)" }
+    if ($vis.Count -ne 1) { throw "Expected 1 initial visible AnittySurface, got $($vis.Count)" }
 
     Write-Host '[TEST] Creating right split (1 -> 2 visible surfaces)'
     Send-Vk -Hwnd $vis[0] -ExpectedPid $expectedPid -Vk ([SplitTestNative]::VK_F9)

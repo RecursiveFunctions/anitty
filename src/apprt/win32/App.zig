@@ -32,10 +32,11 @@ const i18n = internal_os.i18n;
 const log = std.log.scoped(.win32);
 
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
-pub const message_class_name = L("GhosttyMessage");
-pub const window_class_name = L("GhosttyWindow");
-pub const surface_class_name = L("GhosttySurface");
-pub const tab_bar_class_name = L("GhosttyTabBar");
+pub const aumid = L(@import("../../build_config.zig").bundle_id);
+pub const message_class_name = L("AnittyMessage");
+pub const window_class_name = L("AnittyWindow");
+pub const surface_class_name = L("AnittySurface");
+pub const tab_bar_class_name = L("AnittyTabBar");
 
 const WM_GHOSTTY_TICK = c.WM_APP + 1;
 const WM_GHOSTTY_COLOR_SCHEME = c.WM_APP + 2;
@@ -115,7 +116,7 @@ pub fn init(
 
     self.com_initialized = c.OleInitialize(null) >= 0;
     errdefer if (self.com_initialized) c.OleUninitialize();
-    _ = c.SetCurrentProcessExplicitAppUserModelID(L("com.mitchellh.ghostty"));
+    _ = c.SetCurrentProcessExplicitAppUserModelID(aumid);
     updater.cleanupOldExecutable();
 
     try registerClasses(instance);
@@ -156,148 +157,63 @@ pub fn init(
     if (!self.config._diagnostics.empty()) self.postToSelf(WM_GHOSTTY_CONFIG_ERRORS);
 }
 
+const ClassSpec = struct {
+    name: c.LPCWSTR,
+    wndProc: c.WNDPROC,
+    style: c.UINT = 0,
+    use_icon: bool = false,
+    use_cursor: bool = true,
+};
+
+const class_specs = [_]ClassSpec{
+    .{ .name = message_class_name, .wndProc = messageWndProc, .use_cursor = false },
+    .{ .name = window_class_name, .wndProc = Window.wndProc, .style = c.CS_HREDRAW | c.CS_VREDRAW, .use_icon = true },
+    .{ .name = surface_class_name, .wndProc = Surface.wndProc, .style = c.CS_OWNDC },
+    .{ .name = tab_bar_class_name, .wndProc = TabBar.wndProc, .style = c.CS_DBLCLKS },
+    .{ .name = SearchOverlay.class_name, .wndProc = SearchOverlay.wndProc },
+    .{ .name = SurfaceOverlay.banner_class_name, .wndProc = SurfaceOverlay.bannerWndProc },
+    .{ .name = SurfaceOverlay.pill_class_name, .wndProc = SurfaceOverlay.pillWndProc },
+    .{ .name = SurfaceOverlay.scrollbar_class_name, .wndProc = SurfaceOverlay.scrollbarWndProc },
+    .{ .name = SurfaceOverlay.dim_class_name, .wndProc = SurfaceOverlay.dimWndProc },
+    .{ .name = SurfaceOverlay.resize_class_name, .wndProc = SurfaceOverlay.resizeWndProc },
+    .{ .name = CommandPalette.class_name, .wndProc = CommandPalette.wndProc },
+    .{ .name = TabOverview.class_name, .wndProc = TabOverview.wndProc },
+    .{ .name = InspectorWindow.class_name, .wndProc = InspectorWindow.wndProc, .style = c.CS_OWNDC, .use_icon = true },
+};
+
 fn registerClasses(instance: ?c.HINSTANCE) !void {
     const icon = c.LoadIconW(instance, c.makeIntResource(1));
     const cursor = c.LoadCursorW(null, c.IDC_ARROW);
 
-    const msg_wc: c.WNDCLASSEXW = .{
-        .lpfnWndProc = messageWndProc,
-        .hInstance = instance,
-        .lpszClassName = message_class_name,
-    };
-    if (c.RegisterClassExW(&msg_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(message_class_name, instance);
+    var registered: usize = 0;
+    errdefer {
+        while (registered > 0) {
+            registered -= 1;
+            _ = c.UnregisterClassW(class_specs[registered].name, instance);
+        }
+    }
 
-    const window_wc: c.WNDCLASSEXW = .{
-        .style = c.CS_HREDRAW | c.CS_VREDRAW,
-        .lpfnWndProc = Window.wndProc,
-        .hInstance = instance,
-        .hIcon = icon,
-        .hIconSm = icon,
-        .hCursor = cursor,
-        .lpszClassName = window_class_name,
-    };
-    if (c.RegisterClassExW(&window_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(window_class_name, instance);
-
-    const surface_wc: c.WNDCLASSEXW = .{
-        .style = c.CS_OWNDC,
-        .lpfnWndProc = Surface.wndProc,
-        .hInstance = instance,
-        .hCursor = cursor,
-        .lpszClassName = surface_class_name,
-    };
-    if (c.RegisterClassExW(&surface_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(surface_class_name, instance);
-
-    const tab_bar_wc: c.WNDCLASSEXW = .{
-        .style = c.CS_DBLCLKS,
-        .lpfnWndProc = TabBar.wndProc,
-        .hInstance = instance,
-        .hCursor = cursor,
-        .lpszClassName = tab_bar_class_name,
-    };
-    if (c.RegisterClassExW(&tab_bar_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(tab_bar_class_name, instance);
-
-    const search_wc: c.WNDCLASSEXW = .{
-        .lpfnWndProc = SearchOverlay.wndProc,
-        .hInstance = instance,
-        .hCursor = cursor,
-        .lpszClassName = SearchOverlay.class_name,
-    };
-    if (c.RegisterClassExW(&search_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(SearchOverlay.class_name, instance);
-
-    const banner_wc: c.WNDCLASSEXW = .{
-        .lpfnWndProc = SurfaceOverlay.bannerWndProc,
-        .hInstance = instance,
-        .hCursor = cursor,
-        .lpszClassName = SurfaceOverlay.banner_class_name,
-    };
-    if (c.RegisterClassExW(&banner_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(SurfaceOverlay.banner_class_name, instance);
-
-    const pill_wc: c.WNDCLASSEXW = .{
-        .lpfnWndProc = SurfaceOverlay.pillWndProc,
-        .hInstance = instance,
-        .hCursor = cursor,
-        .lpszClassName = SurfaceOverlay.pill_class_name,
-    };
-    if (c.RegisterClassExW(&pill_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(SurfaceOverlay.pill_class_name, instance);
-
-    const sb_wc: c.WNDCLASSEXW = .{
-        .lpfnWndProc = SurfaceOverlay.scrollbarWndProc,
-        .hInstance = instance,
-        .hCursor = cursor,
-        .lpszClassName = SurfaceOverlay.scrollbar_class_name,
-    };
-    if (c.RegisterClassExW(&sb_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(SurfaceOverlay.scrollbar_class_name, instance);
-
-    const dim_wc: c.WNDCLASSEXW = .{
-        .lpfnWndProc = SurfaceOverlay.dimWndProc,
-        .hInstance = instance,
-        .hCursor = cursor,
-        .lpszClassName = SurfaceOverlay.dim_class_name,
-    };
-    if (c.RegisterClassExW(&dim_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(SurfaceOverlay.dim_class_name, instance);
-
-    const resize_wc: c.WNDCLASSEXW = .{
-        .lpfnWndProc = SurfaceOverlay.resizeWndProc,
-        .hInstance = instance,
-        .hCursor = cursor,
-        .lpszClassName = SurfaceOverlay.resize_class_name,
-    };
-    if (c.RegisterClassExW(&resize_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(SurfaceOverlay.resize_class_name, instance);
-
-    const cp_wc: c.WNDCLASSEXW = .{
-        .lpfnWndProc = CommandPalette.wndProc,
-        .hInstance = instance,
-        .hCursor = cursor,
-        .lpszClassName = CommandPalette.class_name,
-    };
-    if (c.RegisterClassExW(&cp_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(CommandPalette.class_name, instance);
-
-    const to_wc: c.WNDCLASSEXW = .{
-        .lpfnWndProc = TabOverview.wndProc,
-        .hInstance = instance,
-        .hCursor = cursor,
-        .lpszClassName = TabOverview.class_name,
-    };
-    if (c.RegisterClassExW(&to_wc) == 0) return error.RegisterClassFailed;
-    errdefer _ = c.UnregisterClassW(TabOverview.class_name, instance);
-
-    const insp_wc: c.WNDCLASSEXW = .{
-        .style = c.CS_OWNDC,
-        .lpfnWndProc = InspectorWindow.wndProc,
-        .hInstance = instance,
-        .hIcon = icon,
-        .hCursor = cursor,
-        .lpszClassName = InspectorWindow.class_name,
-        .hIconSm = icon,
-    };
-    if (c.RegisterClassExW(&insp_wc) == 0) return error.RegisterClassFailed;
+    for (class_specs) |spec| {
+        const wc: c.WNDCLASSEXW = .{
+            .style = spec.style,
+            .lpfnWndProc = spec.wndProc,
+            .hInstance = instance,
+            .hIcon = if (spec.use_icon) icon else null,
+            .hIconSm = if (spec.use_icon) icon else null,
+            .hCursor = if (spec.use_cursor) cursor else null,
+            .lpszClassName = spec.name,
+        };
+        if (c.RegisterClassExW(&wc) == 0) return error.RegisterClassFailed;
+        registered += 1;
+    }
 }
 
 fn unregisterClasses(instance: ?c.HINSTANCE) void {
-    _ = c.UnregisterClassW(InspectorWindow.class_name, instance);
-    _ = c.UnregisterClassW(TabOverview.class_name, instance);
-    _ = c.UnregisterClassW(CommandPalette.class_name, instance);
-    _ = c.UnregisterClassW(SurfaceOverlay.resize_class_name, instance);
-    _ = c.UnregisterClassW(SurfaceOverlay.dim_class_name, instance);
-    _ = c.UnregisterClassW(SurfaceOverlay.scrollbar_class_name, instance);
-    _ = c.UnregisterClassW(SurfaceOverlay.pill_class_name, instance);
-    _ = c.UnregisterClassW(SurfaceOverlay.banner_class_name, instance);
-    _ = c.UnregisterClassW(SearchOverlay.class_name, instance);
-    _ = c.UnregisterClassW(tab_bar_class_name, instance);
-    _ = c.UnregisterClassW(surface_class_name, instance);
-    _ = c.UnregisterClassW(window_class_name, instance);
-    _ = c.UnregisterClassW(message_class_name, instance);
+    var i: usize = class_specs.len;
+    while (i > 0) {
+        i -= 1;
+        _ = c.UnregisterClassW(class_specs[i].name, instance);
+    }
 }
 
 pub fn run(self: *App) !void {
@@ -362,14 +278,11 @@ fn messageWndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(cs.lpCreateParams)));
+        _ = c.initUserData(App, hwnd, lparam);
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *App = @ptrFromInt(ptr);
+    const self = c.userData(App, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     if (taskbarpkg.handleMessage(self, msg, wparam, lparam)) return 0;
 
@@ -387,7 +300,7 @@ fn messageWndProc(
             return 0;
         },
         WM_GHOSTTY_CONFIRM_QUIT => {
-            if (self.confirmTerminate(L("Quit Ghostty?"))) self.quit();
+            if (self.confirmTerminate(L("Quit Anitty?"))) self.quit();
             return 0;
         },
         WM_GHOSTTY_CLOSE_ALL => {
@@ -439,6 +352,17 @@ fn messageWndProc(
 pub fn quit(self: *App) void {
     if (self.quitting) return;
     SessionState.save(self, false);
+    self.quitNow();
+}
+
+pub fn quitForUpgrade(self: *App) void {
+    if (self.quitting) return;
+    SessionState.save(self, true);
+    self.quitNow();
+}
+
+fn quitNow(self: *App) void {
+    if (self.quitting) return;
     self.quitting = true;
     log.debug("quitting", .{});
     self.disarmQuitTimer();
@@ -1047,31 +971,12 @@ fn handleOpenUrl(self: *App, value: apprt.action.OpenUrl) void {
 
 fn confirmOpenUrl(self: *App, url: []const u8) bool {
     if (self.quitting) return false;
-    const alloc = self.core_app.alloc;
-    const main_w = std.unicode.utf8ToUtf16LeAllocZ(
-        alloc,
-        std.mem.span(i18n._("Open external link?")),
-    ) catch null;
-    defer if (main_w) |v| alloc.free(v);
-    const content_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, url) catch return false;
-    defer alloc.free(content_w);
-    const yes_w = std.unicode.utf8ToUtf16LeAllocZ(
-        alloc,
-        std.mem.span(i18n._("Open")),
-    ) catch null;
-    defer if (yes_w) |v| alloc.free(v);
-    const no_w = std.unicode.utf8ToUtf16LeAllocZ(
-        alloc,
-        std.mem.span(i18n._("Cancel")),
-    ) catch null;
-    defer if (no_w) |v| alloc.free(v);
-
     const owner: ?c.HWND = if (self.activeWindow()) |w| w.hwnd else null;
-    const confirmed = dialogs.confirm(owner, .{
-        .main = main_w orelse L("Open external link?"),
-        .content = content_w,
-        .yes = yes_w orelse L("Open"),
-        .no = no_w orelse L("Cancel"),
+    const confirmed = dialogs.confirmUtf8(self.core_app.alloc, owner, .{
+        .main = std.mem.span(i18n._("Open external link?")),
+        .content = url,
+        .yes = std.mem.span(i18n._("Open")),
+        .no = std.mem.span(i18n._("Cancel")),
         .default_yes = false,
         .icon = .warning,
     });

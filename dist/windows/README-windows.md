@@ -1,9 +1,9 @@
-# Anitty
+# Anitty for Windows
 
-Anitty is a native Win32 application (`-Dapp-runtime=win32`)
-that renders with OpenGL and runs shells through ConPTY. It is
-experimental: the features below work, but see
-[Known issues](#known-issues) before relying on it.
+Anitty is an unofficial native Win32 terminal emulator (`-Dapp-runtime=win32`)
+forked from [Ghostty](https://github.com/ghostty-org/ghostty) that renders with
+OpenGL and runs shells through ConPTY. It is experimental: the features below
+work, but see [Known issues](#known-issues) before relying on it.
 
 ## Requirements
 
@@ -15,15 +15,15 @@ experimental: the features below work, but see
 
 ## Portable zip
 
-Extract `ghostty-<version>-windows-x86_64.zip` anywhere and run
-`ghostty\bin\ghostty.exe`. Keep the folder layout intact: Ghostty finds its
+Extract `anitty-<version>-windows-x86_64.zip` anywhere and run
+`anitty\bin\anitty.exe`. Keep the folder layout intact: Anitty finds its
 themes, shell integration and terminfo by walking up from `bin\` to
 `share\ghostty` (it looks for `share\terminfo\ghostty.terminfo`). Setting
 `GHOSTTY_RESOURCES_DIR` overrides the lookup.
 
 ```
-ghostty\
-  bin\ghostty.exe
+anitty\
+  bin\anitty.exe
   share\ghostty\themes\...
   share\ghostty\shell-integration\...
   share\locale\...\LC_MESSAGES\com.mitchellh.ghostty.mo
@@ -35,18 +35,18 @@ ghostty\
 The portable build does not create a Start menu shortcut, so some taskbar
 pinning behaviour only works with the installer.
 
-### "Open Ghostty here" without the installer
+### "Open Anitty here" without the installer
 
 The installer adds the context menu entry for you. For the portable build,
 run this in PowerShell (no elevation needed), with `$exe` pointing at your
-copy of `ghostty.exe`:
+copy of `anitty.exe`:
 
 ```powershell
-$exe = "C:\Tools\ghostty\bin\ghostty.exe"
+$exe = "C:\Tools\anitty\bin\anitty.exe"
 foreach ($key in "Directory\shell", "Directory\Background\shell", "Drive\shell") {
-    $k = "HKCU:\Software\Classes\$key\Ghostty"
+    $k = "HKCU:\Software\Classes\$key\Anitty"
     New-Item -Path "$k\command" -Force | Out-Null
-    Set-ItemProperty -Path $k -Name "(default)" -Value "Open Ghostty here"
+    Set-ItemProperty -Path $k -Name "(default)" -Value "Open Anitty here"
     Set-ItemProperty -Path $k -Name Icon -Value "`"$exe`",0"
     Set-ItemProperty -Path "$k\command" -Name "(default)" -Value "`"$exe`" `"--working-directory=%V\.`""
 }
@@ -57,16 +57,16 @@ quote. To remove the entries:
 
 ```powershell
 foreach ($key in "Directory\shell", "Directory\Background\shell", "Drive\shell") {
-    Remove-Item "HKCU:\Software\Classes\$key\Ghostty" -Recurse
+    Remove-Item "HKCU:\Software\Classes\$key\Anitty" -Recurse
 }
 ```
 
 ## Installer
 
-`ghostty-<version>-windows-x86_64-setup.exe` installs per user into
-`%LOCALAPPDATA%\Programs\Ghostty` without UAC. It creates a Start menu
-shortcut carrying the AppUserModelID `com.mitchellh.ghostty` and, unless
-the task is unticked, an "Open Ghostty here" entry on the folder, folder
+`anitty-<version>-windows-x86_64-setup.exe` installs per user into
+`%LOCALAPPDATA%\Programs\Anitty` without UAC. It creates a Start menu
+shortcut carrying the AppUserModelID `dev.recursivefunctions.anitty` and, unless
+the task is unticked, an "Open Anitty here" entry on the folder, folder
 background and drive context menus. An all-users install into
 `Program Files` is available from the elevation dialog or with
 `/ALLUSERS`.
@@ -74,15 +74,15 @@ background and drive context menus. An all-users install into
 Silent install and uninstall:
 
 ```
-ghostty-<version>-windows-x86_64-setup.exe /VERYSILENT /CURRENTUSER [/DIR="C:\path"] [/TASKS="contextmenu"]
-"%LOCALAPPDATA%\Programs\Ghostty\unins000.exe" /VERYSILENT
+anitty-<version>-windows-x86_64-setup.exe /VERYSILENT /CURRENTUSER [/DIR="C:\path"] [/TASKS="contextmenu"]
+"%LOCALAPPDATA%\Programs\Anitty\unins000.exe" /VERYSILENT
 ```
 
 Uninstalling removes the program files, shortcuts, context menu keys and
 the uninstall entry. It leaves your configuration
 (`%LOCALAPPDATA%\ghostty`, `%APPDATA%\ghostty`) in place.
 
-Windows 11 shows "Open Ghostty here" under "Show more options"; the
+Windows 11 shows "Open Anitty here" under "Show more options"; the
 top-level Windows 11 menu requires a packaged (MSIX) app.
 
 ## Configuration
@@ -157,13 +157,13 @@ Ghostty is a GUI program, so it has no console of its own. To capture its
 log, start it with standard error redirected to a file. From PowerShell:
 
 ```powershell
-Start-Process ghostty.exe -RedirectStandardError "$env:TEMP\ghostty.log"
+Start-Process anitty.exe -RedirectStandardError "$env:TEMP\anitty.log"
 ```
 
 From `cmd.exe`:
 
 ```
-ghostty.exe 2> %TEMP%\ghostty.log
+anitty.exe 2> %TEMP%\anitty.log
 ```
 
 Release builds log at `info` level and above; debug builds also log
@@ -272,23 +272,23 @@ MSVC toolchain on Windows is described under "Windows" in `HACKING.md`.
 ```
 zig build -Dapp-runtime=win32 -Doptimize=ReleaseFast -Dversion-string=1.2.3 -p build\release
 pwsh -File dist\windows\make-zip.ps1 -Prefix build\release -OutDir build\dist
-ISCC.exe /DAppVersion=1.2.3 /DSourceDir=build\dist\staging\ghostty /DOutputDir=build\dist dist\windows\installer\ghostty.iss
+ISCC.exe /DAppVersion=1.2.3 /DSourceDir=build\dist\staging\anitty /DOutputDir=build\dist dist\windows\installer\anitty.iss
 ```
 
 `-Doptimize=ReleaseFast` strips the executable by default. `make-zip.ps1`
-reads the version from `ghostty.exe +version` unless `-Version` is given,
+reads the version from `anitty.exe +version` unless `-Version` is given,
 and writes entries in sorted order with a fixed timestamp so the same
 inputs produce the same zip with the same PowerShell edition
 (5.1 and 7 use different deflate implementations). The unpacked tree is
-left in `<OutDir>\staging\ghostty` for the installer. `ISCC.exe` is not
+left in `<OutDir>\staging\anitty` for the installer. `ISCC.exe` is not
 long-path aware, so keep `OutDir` short enough that
-`staging\ghostty\share\...` stays under 260 characters.
+`staging\anitty\share\...` stays under 260 characters.
 
 ### Bundled ConPTY
 
 Releases should ship `conpty.dll` and `OpenConsole.exe` from Microsoft's
 MIT-licensed [`Microsoft.Windows.Console.ConPTY`](https://www.nuget.org/packages/Microsoft.Windows.Console.ConPTY)
-NuGet package next to `ghostty.exe`. When they are present Ghostty uses
+NuGet package next to `anitty.exe`. When they are present Anitty uses
 them instead of the ConPTY built into Windows; without them it falls back
 to the inbox `conhost.exe`, which repaints the whole screen after every
 resize and garbles reflowed output and multi-line prompts. They are not
@@ -314,7 +314,7 @@ build, copy the two files into `zig-out\bin`.
 
 ## Updating
 
-Open the Command Palette (`ctrl+shift+p`) and run **Check for Updates**. When a newer GitHub release is available, Ghostty downloads `SHA256SUMS.txt` and the matching asset (`Ghostty-Windows-Setup-x64.exe` for installer setups, `Ghostty-Windows-x64.zip` for portable setups), verifies the SHA-256 checksum, and installs the update in place.
+Open the Command Palette (`ctrl+shift+p`) and run **Check for Updates**. When a newer GitHub release is available, Anitty downloads `SHA256SUMS.txt` and the matching asset (`Anitty-Windows-Setup-x64.exe` for installer setups, `Anitty-Windows-x64.zip` for portable setups), verifies the SHA-256 checksum, and installs the update in place.
 
 ## Code signing policy
 

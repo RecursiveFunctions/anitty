@@ -2,18 +2,14 @@ const BellAudio = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const windows = std.os.windows;
-const GUID = windows.GUID;
 const c = @import("c.zig");
+const GUID = c.GUID;
 const HRESULT = c.HRESULT;
 const clipboard = @import("clipboard.zig");
 
 const log = std.log.scoped(.win32);
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
-const S_OK: HRESULT = 0;
-const E_NOINTERFACE: HRESULT = @bitCast(@as(u32, 0x80004002));
-const CLSCTX_INPROC_SERVER: c.DWORD = 0x1;
 const MF_VERSION: c.DWORD = 0x00020070;
 const MFSTARTUP_LITE: c.DWORD = 0x1;
 const MF_MEDIA_ENGINE_AUDIOONLY: c.DWORD = 0x1;
@@ -21,13 +17,6 @@ const AudioCategory_Alerts: u32 = 4;
 const MF_MEDIA_ENGINE_EVENT_LOADEDDATA: c.DWORD = 12;
 const MF_MEDIA_ENGINE_EVENT_CANPLAY: c.DWORD = 14;
 const MF_MEDIA_ENGINE_EVENT_ERROR: c.DWORD = 4;
-
-const IID_IUnknown: GUID = .{
-    .Data1 = 0x00000000,
-    .Data2 = 0x0000,
-    .Data3 = 0x0000,
-    .Data4 = .{ 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 },
-};
 
 const IID_IMFMediaEngineNotify: GUID = .{
     .Data1 = 0xFEE7C112,
@@ -63,17 +52,6 @@ const MF_MEDIA_ENGINE_AUDIO_CATEGORY: GUID = .{
     .Data3 = 0x41F2,
     .Data4 = .{ 0xBA, 0x46, 0xFA, 0xEB, 0xBB, 0x08, 0x57, 0xF6 },
 };
-
-extern "ole32" fn CoCreateInstance(
-    rclsid: *const GUID,
-    pUnkOuter: ?*anyopaque,
-    dwClsContext: c.DWORD,
-    riid: *const GUID,
-    ppv: *?*anyopaque,
-) callconv(.winapi) HRESULT;
-
-extern "kernel32" fn GetFileAttributesW(name: c.LPCWSTR) callconv(.winapi) c.DWORD;
-const INVALID_FILE_ATTRIBUTES: c.DWORD = 0xFFFF_FFFF;
 
 const BSTR = [*:0]u16;
 const MFStartupFn = *const fn (c.DWORD, c.DWORD) callconv(.winapi) HRESULT;
@@ -245,7 +223,7 @@ pub fn ring(
     const wide = clipboard.utf16FromUtf8(alloc, path) catch return false;
     defer alloc.free(wide);
 
-    if (GetFileAttributesW(wide.ptr) == INVALID_FILE_ATTRIBUTES) {
+    if (c.GetFileAttributesW(wide.ptr) == c.INVALID_FILE_ATTRIBUTES) {
         if (required) {
             log.warn("bell-audio-path does not exist or is inaccessible: {s}", .{path});
         }
@@ -328,10 +306,10 @@ fn ensureEngine(self: *BellAudio) ?*IMFMediaEngine {
     self.mf_started = true;
 
     var raw_factory: ?*anyopaque = null;
-    if (CoCreateInstance(
+    if (c.CoCreateInstance(
         &CLSID_MFMediaEngineClassFactory,
         null,
-        CLSCTX_INPROC_SERVER,
+        c.CLSCTX_INPROC_SERVER,
         &IID_IMFMediaEngineClassFactory,
         &raw_factory,
     ) < 0 or raw_factory == null) {
@@ -362,14 +340,14 @@ fn ensureEngine(self: *BellAudio) ?*IMFMediaEngine {
 }
 
 fn notifyQueryInterface(self: *BellAudio, riid: *const GUID, ppv: *?*anyopaque) callconv(.winapi) HRESULT {
-    if (std.mem.eql(u8, std.mem.asBytes(riid), std.mem.asBytes(&IID_IUnknown)) or
+    if (std.mem.eql(u8, std.mem.asBytes(riid), std.mem.asBytes(&c.IID_IUnknown)) or
         std.mem.eql(u8, std.mem.asBytes(riid), std.mem.asBytes(&IID_IMFMediaEngineNotify)))
     {
         ppv.* = self;
-        return S_OK;
+        return c.S_OK;
     }
     ppv.* = null;
-    return E_NOINTERFACE;
+    return c.E_NOINTERFACE;
 }
 
 fn notifyAddRef(_: *BellAudio) callconv(.winapi) u32 {
@@ -403,7 +381,7 @@ fn notifyEvent(
         },
         else => {},
     }
-    return S_OK;
+    return c.S_OK;
 }
 
 pub fn silentWav() [44]u8 {

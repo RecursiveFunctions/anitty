@@ -149,7 +149,7 @@ jobs:
         env:
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
           SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG || 'ghostty-windows' }}
+          SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG || 'anitty' }}
           SIGNPATH_SIGNING_POLICY_SLUG: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
           WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
@@ -159,7 +159,7 @@ jobs:
           AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
           AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
           AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
-        run: ./dist/windows/sign-file.ps1 -FilePath build/release/bin/ghostty.exe
+        run: ./dist/windows/sign-file.ps1 -FilePath build/release/bin/anitty.exe
 
       - name: Package zip
         if: env.SKIP_RELEASE != 'true'
@@ -175,7 +175,7 @@ jobs:
             choco install innosetup --no-progress -y
             $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           }
-          & $iscc "/DAppVersion=$env:VERSION" "/DSourceDir=$PWD\dist\windows\out\staging\ghostty" "/DOutputDir=$PWD\dist\windows\out" dist\windows\installer\ghostty.iss
+          & $iscc "/DAppVersion=$env:VERSION" "/DSourceDir=$PWD\dist\windows\out\staging\anitty" "/DOutputDir=$PWD\dist\windows\out" dist\windows\installer\anitty.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
 
       - name: Sign installer
@@ -184,7 +184,7 @@ jobs:
         env:
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
           SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG || 'ghostty-windows' }}
+          SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG || 'anitty' }}
           SIGNPATH_SIGNING_POLICY_SLUG: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
           WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
@@ -194,7 +194,7 @@ jobs:
           AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
           AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
           AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
-        run: ./dist/windows/sign-file.ps1 -FilePath "dist/windows/out/ghostty-$env:VERSION-windows-x86_64-setup.exe"
+        run: ./dist/windows/sign-file.ps1 -FilePath "dist/windows/out/anitty-$env:VERSION-windows-x86_64-setup.exe"
 
       - name: Collect assets
         if: env.SKIP_RELEASE != 'true'
@@ -202,8 +202,8 @@ jobs:
         run: |
           $out = 'dist/windows/out'
           $assets = New-Item -ItemType Directory -Force 'release-assets'
-          Copy-Item "$out/ghostty-$env:VERSION-windows-x86_64.zip" "$assets/Ghostty-Windows-x64.zip"
-          Copy-Item "$out/ghostty-$env:VERSION-windows-x86_64-setup.exe" "$assets/Ghostty-Windows-Setup-x64.exe"
+          Copy-Item "$out/anitty-$env:VERSION-windows-x86_64.zip" "$assets/Anitty-Windows-x64.zip"
+          Copy-Item "$out/anitty-$env:VERSION-windows-x86_64-setup.exe" "$assets/Anitty-Windows-Setup-x64.exe"
           Get-ChildItem $assets -File | ForEach-Object {
             '{0}  {1}' -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant(), $_.Name
           } | Set-Content -Encoding ascii "$assets/SHA256SUMS.txt"
@@ -228,8 +228,8 @@ jobs:
             }
             $sums = (Get-Content "release-assets/SHA256SUMS.txt" -Raw).Trim()
             $codeSigningPolicy = "### Code signing policy`n`nFree code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).`n- **Committers and reviewers:** [@RecursiveFunctions](https://github.com/RecursiveFunctions)`n- **Approvers:** [@RecursiveFunctions](https://github.com/RecursiveFunctions)`n- **Privacy policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it."
-            $notes = "Ghostty for Windows $env:VERSION, an unofficial community port of [Ghostty](https://github.com/ghostty-org/ghostty).`n`n**Install:** download ``Ghostty-Windows-Setup-x64.exe`` and run it (per-user, no admin needed).`n**Portable:** unzip ``Ghostty-Windows-x64.zip`` and run ``ghostty\bin\ghostty.exe``.`n**In-App Update:** run ``Check for Updates`` from the Command Palette (``ctrl+shift+p``) to automatically download, SHA-256 verify, and install updates.`n`n$signingNotice`n`n### SHA-256 Checksums`n``````text`n$sums`n```````n`n$codeSigningPolicy`n`n### Credits`nBuilt on [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) with initial Win32 runtime from [phalladar/ghostty-windows](https://github.com/phalladar/ghostty-windows).`n`nPer [AI_POLICY.md](https://github.com/RecursiveFunctions/ghostty-windows/blob/windows/AI_POLICY.md): Zig 0.17 rebase, CI release pipeline, and additional Win32 features were developed with AI assistance ([Kilo Code](https://github.com/Kilo-Org/kilocode) + home-grown grass-fed free-range gluten-free local LLMs in a homelab), with human review, builds, and testing. See [README-windows.md](https://github.com/RecursiveFunctions/ghostty-windows/blob/windows/dist/windows/README-windows.md#credits) for the full breakdown."
+            $notes = "Anitty $env:VERSION, an unofficial native Win32 terminal emulator forked from [Ghostty](https://github.com/ghostty-org/ghostty).`n`n**Install:** download ``Anitty-Windows-Setup-x64.exe`` and run it (per-user, no admin needed).`n**Portable:** unzip ``Anitty-Windows-x64.zip`` and run ``anitty\bin\anitty.exe``.`n**In-App Update:** run ``Check for Updates`` from the Command Palette (``ctrl+shift+p``) to automatically download, SHA-256 verify, and install updates.`n`n$signingNotice`n`n### SHA-256 Checksums`n``````text`n$sums`n```````n`n$codeSigningPolicy`n`n### Credits`nBuilt on [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) with initial Win32 runtime from [phalladar/ghostty-windows](https://github.com/phalladar/ghostty-windows).`n`nPer [AI_POLICY.md](https://github.com/RecursiveFunctions/anitty/blob/windows/AI_POLICY.md): Zig 0.17 rebase, CI release pipeline, and additional Win32 features were developed with AI assistance ([Kilo Code](https://github.com/Kilo-Org/kilocode) + home-grown grass-fed free-range gluten-free local LLMs in a homelab), with human review, builds, and testing. See [README-windows.md](https://github.com/RecursiveFunctions/anitty/blob/windows/dist/windows/README-windows.md#credits) for the full breakdown."
 
-            gh release create $env:TAG @files --repo $env:REPOSITORY --target $env:TARGET_SHA --title "Ghostty for Windows $env:VERSION" --notes $notes
+            gh release create $env:TAG @files --repo $env:REPOSITORY --target $env:TARGET_SHA --title "Anitty $env:VERSION" --notes $notes
           }
           if ($LASTEXITCODE -ne 0) { throw "gh release failed with $LASTEXITCODE" }

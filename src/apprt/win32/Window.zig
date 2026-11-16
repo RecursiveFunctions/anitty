@@ -165,7 +165,7 @@ fn createHostWithStyle(app: *App, win_style: c.DWORD, win_ex_style: c.DWORD, qui
     const hwnd = c.CreateWindowExW(
         win_ex_style,
         App.window_class_name,
-        L("Ghostty"),
+        L("Anitty"),
         win_style,
         c.CW_USEDEFAULT,
         c.CW_USEDEFAULT,
@@ -386,7 +386,7 @@ pub fn tabIndex(self: *const Window, surface: *const Surface) ?usize {
 
 pub fn tabTitle(self: *const Window, index: usize) []const u8 {
     const tab = self.tabs.items[index];
-    return tab.title_override orelse tab.focused.getEffectiveTitle() orelse "Ghostty";
+    return tab.title_override orelse tab.focused.getEffectiveTitle() orelse "Anitty";
 }
 
 fn tabBarVisible(self: *const Window, count: usize) bool {
@@ -598,12 +598,12 @@ fn spawnWindow(self: *Window, index: usize, drop: ?c.POINT, grab: i32, live: boo
         x = rect.left + step;
         y = rect.top + step;
     }
-    const monitor = c.MonitorFromPoint(drop orelse .{ .x = x, .y = y }, c.MONITOR_DEFAULTTONEAREST);
-    var info: c.MONITORINFO = .{};
-    if (!live and monitor != null and c.GetMonitorInfoW(monitor.?, &info).toBool()) {
-        const work = info.rcWork;
-        x = @max(work.left, @min(x, work.right - size.x));
-        y = @max(work.top, @min(y, work.bottom - size.y));
+    if (!live) {
+        const monitor = c.MonitorFromPoint(drop orelse .{ .x = x, .y = y }, c.MONITOR_DEFAULTTONEAREST);
+        var r: c.RECT = .{ .left = x, .top = y, .right = x + size.x, .bottom = y + size.y };
+        clampToMonitorWorkArea(monitor, &r);
+        x = r.left;
+        y = r.top;
     }
     const on: c.BOOL = .TRUE;
     _ = c.DwmSetWindowAttribute(target_hwnd, c.DWMWA_CLOAK, &on, @sizeOf(c.BOOL));
@@ -1077,7 +1077,7 @@ fn refreshTitle(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     const alloc = self.app.core_app.alloc;
     const base: []const u8 = self.title_override orelse
-        if (self.active < self.tabs.items.len) self.tabTitle(self.active) else "Ghostty";
+        if (self.active < self.tabs.items.len) self.tabTitle(self.active) else "Anitty";
     const show_bell = self.app.config.@"bell-features".title and self.anyBellRinging();
     const prefix: []const u8 = if (show_bell) "\u{1F514} " else "";
     const full = std.mem.concat(alloc, u8, &.{ prefix, base }) catch return;
@@ -1364,17 +1364,9 @@ pub fn resetWindowSize(self: *Window) bool {
         break :size outerSize(hwnd, client_w, client_h + bar_h);
     } else self.defaultGridOuterSize(hwnd, surface, bar_h);
 
-    var w = size.x;
-    var h = size.y;
-    if (c.MonitorFromWindow(hwnd, c.MONITOR_DEFAULTTONEAREST)) |monitor| {
-        var info: c.MONITORINFO = .{};
-        if (c.GetMonitorInfoW(monitor, &info).toBool()) {
-            const work = info.rcWork;
-            w = @min(w, work.right - work.left);
-            h = @min(h, work.bottom - work.top);
-        }
-    }
-    _ = c.SetWindowPos(hwnd, null, 0, 0, w, h, c.SWP_NOMOVE | c.SWP_NOZORDER | c.SWP_NOACTIVATE);
+    var r: c.RECT = .{ .right = size.x, .bottom = size.y };
+    clampToMonitorWorkArea(c.MonitorFromWindow(hwnd, c.MONITOR_DEFAULTTONEAREST), &r);
+    _ = c.SetWindowPos(hwnd, null, 0, 0, r.right - r.left, r.bottom - r.top, c.SWP_NOMOVE | c.SWP_NOZORDER | c.SWP_NOACTIVATE);
     return true;
 }
 
@@ -1400,17 +1392,9 @@ pub fn resizeSurface(self: *Window, surface: *Surface, req: apprt.action.ResizeW
         cur_h;
 
     const size = outerSize(hwnd, target_w, target_h);
-    var w = size.x;
-    var h = size.y;
-    if (c.MonitorFromWindow(hwnd, c.MONITOR_DEFAULTTONEAREST)) |monitor| {
-        var info: c.MONITORINFO = .{};
-        if (c.GetMonitorInfoW(monitor, &info).toBool()) {
-            const work = info.rcWork;
-            w = @min(w, work.right - work.left);
-            h = @min(h, work.bottom - work.top);
-        }
-    }
-    _ = c.SetWindowPos(hwnd, null, 0, 0, w, h, c.SWP_NOMOVE | c.SWP_NOZORDER | c.SWP_NOACTIVATE);
+    var r: c.RECT = .{ .right = size.x, .bottom = size.y };
+    clampToMonitorWorkArea(c.MonitorFromWindow(hwnd, c.MONITOR_DEFAULTTONEAREST), &r);
+    _ = c.SetWindowPos(hwnd, null, 0, 0, r.right - r.left, r.bottom - r.top, c.SWP_NOMOVE | c.SWP_NOZORDER | c.SWP_NOACTIVATE);
     return true;
 }
 
@@ -1450,25 +1434,35 @@ fn place(self: *Window, prev: ?*Window) void {
     var info: c.MONITORINFO = .{};
     if (!c.GetMonitorInfoW(monitor, &info).toBool()) return;
     const work = info.rcWork;
-    w = @min(w, work.right - work.left);
-    h = @min(h, work.bottom - work.top);
 
     var x = rect.left;
     var y = rect.top;
     if (prev) |p| if (p.hwnd) |prev_hwnd| {
         var prev_rect: c.RECT = .{};
         if (c.GetWindowRect(prev_hwnd, &prev_rect).toBool()) {
-            const step: i32 = @intCast(@divTrunc(cascade_step * dpi, 96));
+            const step = c.scaleDpi(cascade_step, dpi);
             x = prev_rect.left + step;
             y = prev_rect.top + step;
-            if (x + w > work.right) x = work.left;
-            if (y + h > work.bottom) y = work.top;
+            if (x + @min(w, work.right - work.left) > work.right) x = work.left;
+            if (y + @min(h, work.bottom - work.top) > work.bottom) y = work.top;
         }
     };
-    x = @max(work.left, @min(x, work.right - w));
-    y = @max(work.top, @min(y, work.bottom - h));
+    var target: c.RECT = .{ .left = x, .top = y, .right = x + w, .bottom = y + h };
+    clampToMonitorWorkArea(monitor, &target);
 
-    _ = c.SetWindowPos(hwnd, null, x, y, w, h, c.SWP_NOZORDER | c.SWP_NOACTIVATE);
+    _ = c.SetWindowPos(hwnd, null, target.left, target.top, target.right - target.left, target.bottom - target.top, c.SWP_NOZORDER | c.SWP_NOACTIVATE);
+}
+
+fn clampToMonitorWorkArea(monitor: ?c.HMONITOR, rect: *c.RECT) void {
+    const mon = monitor orelse return;
+    var info: c.MONITORINFO = .{};
+    if (!c.GetMonitorInfoW(mon, &info).toBool()) return;
+    const work = info.rcWork;
+    const w = @min(rect.right - rect.left, work.right - work.left);
+    const h = @min(rect.bottom - rect.top, work.bottom - work.top);
+    const x = @max(work.left, @min(rect.left, work.right - w));
+    const y = @max(work.top, @min(rect.top, work.bottom - h));
+    rect.* = .{ .left = x, .top = y, .right = x + w, .bottom = y + h };
 }
 
 fn outerSize(hwnd: c.HWND, width: u32, height: u32) c.POINT {
@@ -1682,12 +1676,6 @@ fn paint(self: *Window, hdc: c.HDC, dirty: c.RECT) void {
     self.split_view.paint(hdc, dirty, c.GetDpiForWindow(hwnd), Chrome.colorRef(config.background), line);
 }
 
-fn pointFromLparam(lparam: c.LPARAM) c.POINT {
-    const x: i16 = @bitCast(c.loword(lparam));
-    const y: i16 = @bitCast(c.hiword(lparam));
-    return .{ .x = x, .y = y };
-}
-
 fn handleClose(self: *Window) void {
     for (0..self.tabs.items.len) |i| {
         if (!self.tabNeedsConfirm(i)) continue;
@@ -1711,16 +1699,12 @@ pub fn wndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *Window = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(Window, hwnd, lparam);
         self.hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *Window = @ptrFromInt(ptr);
+    const self = c.userData(Window, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         c.WM_SIZE => {
@@ -1840,19 +1824,19 @@ pub fn wndProc(
             }
         },
 
-        c.WM_LBUTTONDOWN => if (self.split_view.hit(pointFromLparam(lparam))) |divider| {
+        c.WM_LBUTTONDOWN => if (self.split_view.hit(c.pointFromLparam(lparam))) |divider| {
             self.drag = divider.handle;
             _ = c.SetCapture(hwnd);
             return 0;
         },
 
         c.WM_MOUSEMOVE => if (self.drag != null) {
-            self.dragTo(pointFromLparam(lparam));
+            self.dragTo(c.pointFromLparam(lparam));
             return 0;
         },
 
         c.WM_LBUTTONUP => if (self.drag != null) {
-            self.dragTo(pointFromLparam(lparam));
+            self.dragTo(c.pointFromLparam(lparam));
             self.cancelDrag();
             return 0;
         },

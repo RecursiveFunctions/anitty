@@ -2,22 +2,11 @@ const DropTarget = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const windows = std.os.windows;
-const GUID = windows.GUID;
 const c = @import("c.zig");
+const GUID = c.GUID;
 const HRESULT = c.HRESULT;
 const clipboard = @import("clipboard.zig");
 const Surface = @import("Surface.zig");
-
-const S_OK: HRESULT = 0;
-const E_NOINTERFACE: HRESULT = @bitCast(@as(u32, 0x80004002));
-
-const IID_IUnknown: GUID = .{
-    .Data1 = 0x00000000,
-    .Data2 = 0x0000,
-    .Data3 = 0x0000,
-    .Data4 = .{ 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 },
-};
 
 const IID_IDropTarget: GUID = .{
     .Data1 = 0x00000122,
@@ -93,15 +82,15 @@ pub fn revoke(self: *DropTarget, hwnd: ?c.HWND) void {
 }
 
 fn queryInterface(self: *DropTarget, riid: *const GUID, ppv: *?*anyopaque) callconv(.winapi) HRESULT {
-    if (std.mem.eql(u8, std.mem.asBytes(riid), std.mem.asBytes(&IID_IUnknown)) or
+    if (std.mem.eql(u8, std.mem.asBytes(riid), std.mem.asBytes(&c.IID_IUnknown)) or
         std.mem.eql(u8, std.mem.asBytes(riid), std.mem.asBytes(&IID_IDropTarget)))
     {
         ppv.* = self;
         _ = addRef(self);
-        return S_OK;
+        return c.S_OK;
     }
     ppv.* = null;
-    return E_NOINTERFACE;
+    return c.E_NOINTERFACE;
 }
 
 fn addRef(self: *DropTarget) callconv(.winapi) u32 {
@@ -131,9 +120,9 @@ fn formatEtc(cf: c.UINT) c.FORMATETC {
 
 fn canDrop(data_obj: *IDataObject) bool {
     const fmt_hdrop = formatEtc(c.CF_HDROP);
-    if (data_obj.lpVtbl.QueryGetData(data_obj, &fmt_hdrop) == S_OK) return true;
+    if (data_obj.lpVtbl.QueryGetData(data_obj, &fmt_hdrop) == c.S_OK) return true;
     const fmt_text = formatEtc(c.CF_UNICODETEXT);
-    if (data_obj.lpVtbl.QueryGetData(data_obj, &fmt_text) == S_OK) return true;
+    if (data_obj.lpVtbl.QueryGetData(data_obj, &fmt_text) == c.S_OK) return true;
     return false;
 }
 
@@ -146,7 +135,7 @@ fn dragEnter(
 ) callconv(.winapi) HRESULT {
     self.supported = canDrop(data_obj);
     effect.* = if (self.supported) c.DROPEFFECT_COPY else c.DROPEFFECT_NONE;
-    return S_OK;
+    return c.S_OK;
 }
 
 fn dragOver(
@@ -156,12 +145,12 @@ fn dragOver(
     effect: *c.DWORD,
 ) callconv(.winapi) HRESULT {
     effect.* = if (self.supported) c.DROPEFFECT_COPY else c.DROPEFFECT_NONE;
-    return S_OK;
+    return c.S_OK;
 }
 
 fn dragLeave(self: *DropTarget) callconv(.winapi) HRESULT {
     self.supported = false;
-    return S_OK;
+    return c.S_OK;
 }
 
 fn drop(
@@ -174,21 +163,21 @@ fn drop(
     self.supported = false;
     const surface = self.surface orelse {
         effect.* = c.DROPEFFECT_NONE;
-        return S_OK;
+        return c.S_OK;
     };
 
     if (self.dropFiles(surface, data_obj)) {
         effect.* = c.DROPEFFECT_COPY;
-        return S_OK;
+        return c.S_OK;
     }
 
     if (self.dropText(surface, data_obj)) {
         effect.* = c.DROPEFFECT_COPY;
-        return S_OK;
+        return c.S_OK;
     }
 
     effect.* = c.DROPEFFECT_NONE;
-    return S_OK;
+    return c.S_OK;
 }
 
 fn dropFiles(self: *DropTarget, surface: *Surface, data_obj: *IDataObject) bool {

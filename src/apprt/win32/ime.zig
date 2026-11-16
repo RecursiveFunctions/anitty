@@ -363,7 +363,7 @@ test "IMM messages on a real window" {
     const alloc = testing.allocator;
     const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
-    const class = L("GhosttyImeTest");
+    const class = L("AnittyImeTest");
     const instance = c.GetModuleHandleW(null);
     const wc: c.WNDCLASSEXW = .{
         .lpfnWndProc = &c.DefWindowProcW,

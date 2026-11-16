@@ -481,15 +481,13 @@ fn mouseMods(wparam: c.WPARAM) input.Mods {
 }
 
 fn trackMouseLeave(self: *Surface) void {
-    if (self.mouse_tracking) return;
-    var tme: c.TRACKMOUSEEVENT = .{ .dwFlags = c.TME_LEAVE, .hwndTrack = self.hwnd };
-    if (c.TrackMouseEvent(&tme).toBool()) self.mouse_tracking = true;
+    c.trackMouseLeave(self.hwnd, &self.mouse_tracking);
 }
 
 fn mouseMove(self: *Surface, wparam: c.WPARAM, lparam: c.LPARAM) void {
     self.trackMouseLeave();
-    const x: i16 = @bitCast(c.loword(lparam));
-    const y: i16 = @bitCast(c.hiword(lparam));
+    const x = c.xFromLparam(lparam);
+    const y = c.yFromLparam(lparam);
     const pos: apprt.CursorPos = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
     if (pos.x == self.cursor_pos.x and pos.y == self.cursor_pos.y) return;
     self.cursor_pos = pos;
@@ -571,9 +569,7 @@ fn appendContextMenuItem(
     fallback: [:0]const u16,
 ) void {
     const flags: c.UINT = if (enabled) c.MF_STRING else c.MF_STRING | c.MF_GRAYED;
-    const wide = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(label_utf8)) catch null;
-    defer if (wide) |w| alloc.free(w);
-    _ = c.AppendMenuW(menu, flags, @backingInt(cmd), if (wide) |w| w.ptr else fallback.ptr);
+    dialogs.appendMenuUtf8(alloc, menu, flags, @backingInt(cmd), label_utf8, fallback);
 }
 
 fn showContextMenu(self: *Surface, hwnd: c.HWND, pt_client: c.POINT) void {
@@ -865,18 +861,17 @@ const ClipboardPrompt = enum { paste, read, write };
 
 fn confirmClipboard(self: *Surface, prompt: ClipboardPrompt, text: []const u8) bool {
     const alloc = self.app.core_app.alloc;
-    const L = std.unicode.utf8ToUtf16LeStringLiteral;
-    const title: [:0]const u16, const body: []const u8 = switch (prompt) {
+    const title: []const u8, const body: []const u8 = switch (prompt) {
         .paste => .{
-            L("Warning: Potentially Unsafe Paste"),
+            "Warning: Potentially Unsafe Paste",
             "Pasting this text into the terminal may be dangerous as it looks like some commands may be executed.",
         },
         .read => .{
-            L("Authorize Clipboard Access"),
+            "Authorize Clipboard Access",
             "An application is attempting to read from the clipboard. The current clipboard contents are shown below.",
         },
         .write => .{
-            L("Authorize Clipboard Access"),
+            "Authorize Clipboard Access",
             "An application is attempting to write to the clipboard. The current clipboard contents are shown below.",
         },
     };
@@ -886,14 +881,12 @@ fn confirmClipboard(self: *Surface, prompt: ClipboardPrompt, text: []const u8) b
     const ellipsis = if (end < text.len) "\n…" else "";
     const message = alloc.print("{s}\n\n{s}{s}", .{ body, text[0..end], ellipsis }) catch return false;
     defer alloc.free(message);
-    const wide = clipboard.utf16FromUtf8(alloc, message) catch return false;
-    defer alloc.free(wide);
 
-    return dialogs.confirm(if (self.detached) null else self.window.hwnd, .{
+    return dialogs.confirmUtf8(alloc, if (self.detached) null else self.window.hwnd, .{
         .main = title,
-        .content = wide,
-        .yes = L("Allow"),
-        .no = L("Deny"),
+        .content = message,
+        .yes = "Allow",
+        .no = "Deny",
         .default_yes = false,
     });
 }
@@ -1053,16 +1046,12 @@ pub fn wndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *Surface = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(Surface, hwnd, lparam);
         self.hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *Surface = @ptrFromInt(ptr);
+    const self = c.userData(Surface, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     if (self.ime_state.handle(self, self.app.core_app.alloc, hwnd, msg, wparam, lparam)) |result| return result;
 
@@ -1153,25 +1142,22 @@ pub fn wndProc(
         c.WM_RBUTTONUP => {
             const consumed = self.mouseButton(.release, .right, wparam, lparam);
             if (!consumed and self.initialized and self.core_surface.config.right_click_action == .@"context-menu") {
-                const x: i16 = @bitCast(c.loword(lparam));
-                const y: i16 = @bitCast(c.hiword(lparam));
-                self.showContextMenu(hwnd, .{ .x = x, .y = y });
+                self.showContextMenu(hwnd, c.pointFromLparam(lparam));
             }
             return 0;
         },
 
         c.WM_CONTEXTMENU => {
             if (self.initialized and self.core_surface.config.right_click_action == .@"context-menu") {
-                const x: i16 = @bitCast(c.loword(lparam));
-                const y: i16 = @bitCast(c.hiword(lparam));
-                const pt: c.POINT = if (x == -1 and y == -1) .{
-                    .x = @intCast(self.size.width / 2),
-                    .y = @intCast(self.size.height / 2),
-                } else pt: {
-                    var p: c.POINT = .{ .x = x, .y = y };
-                    _ = c.ScreenToClient(hwnd, &p);
-                    break :pt p;
-                };
+                var pt = c.pointFromLparam(lparam);
+                if (pt.x == -1 and pt.y == -1) {
+                    pt = .{
+                        .x = @intCast(self.size.width / 2),
+                        .y = @intCast(self.size.height / 2),
+                    };
+                } else {
+                    _ = c.ScreenToClient(hwnd, &pt);
+                }
                 self.showContextMenu(hwnd, pt);
             }
             return 0;

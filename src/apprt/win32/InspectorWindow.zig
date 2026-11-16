@@ -14,7 +14,7 @@ const c = @import("c.zig");
 const log = std.log.scoped(.win32_inspector);
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
-pub const class_name = L("GhosttyInspector");
+pub const class_name = L("AnittyInspector");
 const refresh_timer_id: c.UINT_PTR = 1;
 const refresh_interval_ms: c.UINT = 100;
 
@@ -74,7 +74,7 @@ fn create(surface: *Surface) !*InspectorWindow {
     const hwnd = c.CreateWindowExW(
         c.WS_EX_APPWINDOW,
         class_name,
-        L("Ghostty Terminal Inspector"),
+        L("Anitty Terminal Inspector"),
         c.WS_OVERLAPPEDWINDOW | c.WS_CLIPSIBLINGS | c.WS_CLIPCHILDREN,
         c.CW_USEDEFAULT,
         c.CW_USEDEFAULT,
@@ -102,7 +102,7 @@ fn create(surface: *Surface) !*InspectorWindow {
     cimgui.c.ImGui_SetCurrentContext(self.ig_context);
 
     const io: *cimgui.c.ImGuiIO = cimgui.c.ImGui_GetIO();
-    io.BackendPlatformName = "ghostty_win32";
+    io.BackendPlatformName = "anitty_win32";
 
     if (!cimgui.ImGui_ImplOpenGL3_Init(null)) return error.ImGuiOpenGLInitFailed;
     errdefer cimgui.ImGui_ImplOpenGL3_ShutdownWithLoaderCleanup();

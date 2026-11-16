@@ -1,12 +1,12 @@
 param(
-    [string]$GhosttyExe = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'zig-out/bin/ghostty.exe')
+    [string]$GhosttyExe = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'zig-out/bin/anitty.exe')
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path -LiteralPath $GhosttyExe)) {
-    throw "ghostty.exe not found at $GhosttyExe"
+    throw "anitty.exe not found at $GhosttyExe"
 }
 
 Add-Type -TypeDefinition @"
@@ -140,7 +140,7 @@ function Run-ResizeScenario([bool]$AllowResize) {
             [ref]$msgRes
         )
         if ($ping -eq [IntPtr]::Zero) {
-            throw 'GhosttyWindow did not respond to SendMessageTimeoutW after resize'
+            throw 'AnittyWindow did not respond to SendMessageTimeoutW after resize'
         }
     } finally {
         if (-not $proc.HasExited) {

@@ -75,35 +75,16 @@ const TaskDialogIndirectFn = *const fn (
     verification: ?*c.BOOL,
 ) callconv(.winapi) c.HRESULT;
 
-const DLGPROC = *const fn (c.HWND, c.UINT, c.WPARAM, c.LPARAM) callconv(.winapi) isize;
-
-extern "kernel32" fn LoadLibraryW(name: c.LPCWSTR) callconv(.winapi) ?c.HINSTANCE;
-extern "kernel32" fn GetProcAddress(module: c.HINSTANCE, name: [*:0]const u8) callconv(.winapi) ?*const anyopaque;
-extern "user32" fn DialogBoxIndirectParamW(instance: ?c.HINSTANCE, template: *const anyopaque, owner: ?c.HWND, proc: DLGPROC, param: c.LPARAM) callconv(.winapi) isize;
-extern "user32" fn EndDialog(hwnd: c.HWND, result: isize) callconv(.winapi) c.BOOL;
-extern "user32" fn GetDlgItem(hwnd: c.HWND, id: c_int) callconv(.winapi) ?c.HWND;
-extern "user32" fn SendMessageW(hwnd: c.HWND, msg: c.UINT, wparam: c.WPARAM, lparam: c.LPARAM) callconv(.winapi) c.LRESULT;
-extern "user32" fn GetWindowTextLengthW(hwnd: c.HWND) callconv(.winapi) c_int;
-extern "user32" fn GetWindowTextW(hwnd: c.HWND, buf: [*]u16, max: c_int) callconv(.winapi) c_int;
-extern "user32" fn GetWindow(hwnd: c.HWND, cmd: c.UINT) callconv(.winapi) ?c.HWND;
-extern "shell32" fn ShellExecuteW(hwnd: ?c.HWND, op: ?c.LPCWSTR, file: c.LPCWSTR, params: ?c.LPCWSTR, dir: ?c.LPCWSTR, show: c_int) callconv(.winapi) ?c.HINSTANCE;
-extern "shell32" fn FindExecutableW(file: c.LPCWSTR, dir: ?c.LPCWSTR, result: [*]u16) callconv(.winapi) ?c.HINSTANCE;
-extern "ole32" fn CoCreateInstance(rclsid: *const std.os.windows.GUID, outer: ?*anyopaque, clsctx: c.DWORD, riid: *const std.os.windows.GUID, ppv: *?*anyopaque) callconv(.winapi) c.HRESULT;
-extern "ole32" fn CoTaskMemFree(pv: ?*anyopaque) callconv(.winapi) void;
-
-const CLSCTX_INPROC_SERVER: c.DWORD = 0x1;
-const CLSCTX_INPROC_HANDLER: c.DWORD = 0x2;
-const CLSCTX_LOCAL_SERVER: c.DWORD = 0x4;
 const SIGDN_FILESYSPATH: c.DWORD = 0x80058000;
 
-const CLSID_FileSaveDialog: std.os.windows.GUID = .{
+const CLSID_FileSaveDialog: c.GUID = .{
     .Data1 = 0xC0B4E2F3,
     .Data2 = 0xBA21,
     .Data3 = 0x4773,
     .Data4 = .{ 0x8D, 0xBA, 0x33, 0x5E, 0xC9, 0x46, 0xEB, 0x8B },
 };
 
-const IID_IFileDialog: std.os.windows.GUID = .{
+const IID_IFileDialog: c.GUID = .{
     .Data1 = 0x42F85136,
     .Data2 = 0xDB7E,
     .Data3 = 0x439C,
@@ -151,14 +132,14 @@ const IFileDialog = extern struct {
     };
 };
 
-const CLSID_UIHostNoLaunch: std.os.windows.GUID = .{
+const CLSID_UIHostNoLaunch: c.GUID = .{
     .Data1 = 0x4CE576FA,
     .Data2 = 0x83DC,
     .Data3 = 0x4F88,
     .Data4 = .{ 0x95, 0x1C, 0x9D, 0x07, 0x82, 0xB4, 0xE3, 0x76 },
 };
 
-const IID_ITipInvocation: std.os.windows.GUID = .{
+const IID_ITipInvocation: c.GUID = .{
     .Data1 = 0x37C994E7,
     .Data2 = 0x432B,
     .Data3 = 0x4834,
@@ -169,7 +150,7 @@ const ITipInvocation = extern struct {
     lpVtbl: *const Vtbl,
 
     const Vtbl = extern struct {
-        QueryInterface: *const fn (*ITipInvocation, *const std.os.windows.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
+        QueryInterface: *const fn (*ITipInvocation, *const c.GUID, *?*anyopaque) callconv(.winapi) c.HRESULT,
         AddRef: *const fn (*ITipInvocation) callconv(.winapi) u32,
         Release: *const fn (*ITipInvocation) callconv(.winapi) u32,
         Toggle: *const fn (*ITipInvocation, ?c.HWND) callconv(.winapi) c.HRESULT,
@@ -178,10 +159,10 @@ const ITipInvocation = extern struct {
 
 pub fn showOnScreenKeyboard() bool {
     var raw: ?*anyopaque = null;
-    const hr = CoCreateInstance(
+    const hr = c.CoCreateInstance(
         &CLSID_UIHostNoLaunch,
         null,
-        CLSCTX_INPROC_HANDLER | CLSCTX_LOCAL_SERVER,
+        c.CLSCTX_INPROC_HANDLER | c.CLSCTX_LOCAL_SERVER,
         &IID_ITipInvocation,
         &raw,
     );
@@ -190,7 +171,7 @@ pub fn showOnScreenKeyboard() bool {
         defer _ = tip.lpVtbl.Release(tip);
         if (tip.lpVtbl.Toggle(tip, c.GetDesktopWindow()) >= 0) return true;
     };
-    const res = ShellExecuteW(null, L("open"), L("TabTip.exe"), null, null, c.SW_SHOWNORMAL);
+    const res = c.ShellExecuteW(null, L("open"), L("TabTip.exe"), null, null, c.SW_SHOWNORMAL);
     return @intFromPtr(res) > 32;
 }
 
@@ -200,8 +181,8 @@ var task_dialog_loaded = false;
 fn taskDialogIndirect() ?TaskDialogIndirectFn {
     if (task_dialog_loaded) return task_dialog_fn;
     task_dialog_loaded = true;
-    const module = LoadLibraryW(L("comctl32.dll")) orelse return null;
-    const proc = GetProcAddress(module, "TaskDialogIndirect") orelse return null;
+    const module = c.LoadLibraryW(L("comctl32.dll")) orelse return null;
+    const proc = c.GetProcAddress(module, "TaskDialogIndirect") orelse return null;
     task_dialog_fn = @ptrCast(proc);
     return task_dialog_fn;
 }
@@ -209,7 +190,7 @@ fn taskDialogIndirect() ?TaskDialogIndirectFn {
 pub const Icon = enum { warning, information };
 
 pub const Confirm = struct {
-    title: [:0]const u16 = L("Ghostty"),
+    title: [:0]const u16 = L("Anitty"),
     main: [:0]const u16,
     content: ?[:0]const u16 = null,
     yes: [:0]const u16,
@@ -256,6 +237,68 @@ pub fn info(owner: ?c.HWND, title: [:0]const u16, main: [:0]const u16, content: 
     _ = c.MessageBoxW(owner, content orelse main, title, c.MB_OK | MB_ICONINFORMATION);
 }
 
+pub const ConfirmUtf8 = struct {
+    title: []const u8 = "Anitty",
+    main: []const u8,
+    content: ?[]const u8 = null,
+    yes: []const u8,
+    no: []const u8 = "Cancel",
+    default_yes: bool = true,
+    icon: Icon = .warning,
+};
+
+pub fn confirmUtf8(alloc: Allocator, owner: ?c.HWND, opts: ConfirmUtf8) bool {
+    const title_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, opts.title) catch null;
+    defer if (title_w) |v| alloc.free(v);
+    const main_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, opts.main) catch return false;
+    defer alloc.free(main_w);
+    const content_w = if (opts.content) |content|
+        (std.unicode.utf8ToUtf16LeAllocZ(alloc, content) catch return false)
+    else
+        null;
+    defer if (content_w) |v| alloc.free(v);
+    const yes_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, opts.yes) catch return false;
+    defer alloc.free(yes_w);
+    const no_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, opts.no) catch null;
+    defer if (no_w) |v| alloc.free(v);
+
+    return confirm(owner, .{
+        .title = title_w orelse L("Anitty"),
+        .main = main_w,
+        .content = content_w,
+        .yes = yes_w,
+        .no = no_w orelse L("Cancel"),
+        .default_yes = opts.default_yes,
+        .icon = opts.icon,
+    });
+}
+
+pub fn infoUtf8(alloc: Allocator, owner: ?c.HWND, title: []const u8, main: []const u8, content: ?[]const u8) void {
+    const title_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, title) catch null;
+    defer if (title_w) |v| alloc.free(v);
+    const main_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, main) catch return;
+    defer alloc.free(main_w);
+    const content_w = if (content) |c_str|
+        (std.unicode.utf8ToUtf16LeAllocZ(alloc, c_str) catch return)
+    else
+        null;
+    defer if (content_w) |v| alloc.free(v);
+    info(owner, title_w orelse L("Anitty"), main_w, content_w);
+}
+
+pub fn appendMenuUtf8(
+    alloc: Allocator,
+    menu: c.HMENU,
+    flags: c.UINT,
+    id: usize,
+    label_utf8: [*:0]const u8,
+    fallback: [:0]const u16,
+) void {
+    const wide = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(label_utf8)) catch null;
+    defer if (wide) |w| alloc.free(w);
+    _ = c.AppendMenuW(menu, flags, id, if (wide) |w| w.ptr else fallback.ptr);
+}
+
 fn runTaskDialog(config: *const TaskDialogConfig) ?c_int {
     const func = taskDialogIndirect() orelse return null;
     var button: c_int = IDCANCEL;
@@ -284,9 +327,8 @@ fn iconFlags(icon: Icon) c.UINT {
 pub const CloseTarget = enum { app, window, tab, surface };
 
 pub fn confirmClose(owner: ?c.HWND, target: CloseTarget) bool {
-    const alloc = global.alloc();
     const main_utf8: [*:0]const u8 = switch (target) {
-        .app => i18n._("Quit Ghostty?"),
+        .app => i18n._("Quit Anitty?"),
         .window => i18n._("Close Window?"),
         .tab => i18n._("Close Tab?"),
         .surface => i18n._("Close Split?"),
@@ -297,33 +339,11 @@ pub fn confirmClose(owner: ?c.HWND, target: CloseTarget) bool {
         .tab => i18n._("All terminal sessions in this tab will be terminated."),
         .surface => i18n._("The currently running process in this split will be terminated."),
     };
-    const yes_utf8 = i18n._("Close");
-    const no_utf8 = i18n._("Cancel");
-
-    const main_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(main_utf8)) catch null;
-    defer if (main_w) |v| alloc.free(v);
-    const content_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(content_utf8)) catch null;
-    defer if (content_w) |v| alloc.free(v);
-    const yes_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(yes_utf8)) catch null;
-    defer if (yes_w) |v| alloc.free(v);
-    const no_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, std.mem.span(no_utf8)) catch null;
-    defer if (no_w) |v| alloc.free(v);
-
-    return confirm(owner, .{
-        .main = main_w orelse switch (target) {
-            .app => L("Quit Ghostty?"),
-            .window => L("Close Window?"),
-            .tab => L("Close Tab?"),
-            .surface => L("Close Split?"),
-        },
-        .content = content_w orelse switch (target) {
-            .app => L("All terminal sessions will be terminated."),
-            .window => L("All terminal sessions in this window will be terminated."),
-            .tab => L("All terminal sessions in this tab will be terminated."),
-            .surface => L("The currently running process in this split will be terminated."),
-        },
-        .yes = yes_w orelse L("Close"),
-        .no = no_w orelse L("Cancel"),
+    return confirmUtf8(global.alloc(), owner, .{
+        .main = std.mem.span(main_utf8),
+        .content = std.mem.span(content_utf8),
+        .yes = std.mem.span(i18n._("Close")),
+        .no = std.mem.span(i18n._("Cancel")),
     });
 }
 
@@ -331,7 +351,7 @@ const edit_id: c_int = 100;
 
 const Prompt = struct {
     initial: [:0]const u16,
-    result: ?[:0]u16 = null,
+    result: ?[:0]u8 = null,
     alloc: Allocator,
 };
 
@@ -349,17 +369,19 @@ pub fn promptText(
     try template.build(title, label);
 
     var state: Prompt = .{ .initial = initial_w, .alloc = alloc };
-    const rc = DialogBoxIndirectParamW(
+    const rc = c.DialogBoxIndirectParamW(
         c.GetModuleHandleW(null),
         &template.buf,
         owner,
         promptProc,
         @bitCast(@intFromPtr(&state)),
     );
-    const wide = state.result orelse return null;
-    defer alloc.free(wide);
-    if (rc != IDOK) return null;
-    return try std.unicode.utf16LeToUtf8AllocZ(alloc, wide);
+    const utf8 = state.result orelse return null;
+    if (rc != IDOK) {
+        alloc.free(utf8);
+        return null;
+    }
+    return utf8;
 }
 
 fn promptProc(hwnd: c.HWND, msg: c.UINT, wparam: c.WPARAM, lparam: c.LPARAM) callconv(.winapi) isize {
@@ -367,9 +389,9 @@ fn promptProc(hwnd: c.HWND, msg: c.UINT, wparam: c.WPARAM, lparam: c.LPARAM) cal
         WM_INITDIALOG => {
             _ = c.SetWindowLongPtrW(hwnd, DWLP_USER, lparam);
             const state: *Prompt = @ptrFromInt(@as(usize, @bitCast(lparam)));
-            if (GetDlgItem(hwnd, edit_id)) |edit| {
+            if (c.GetDlgItem(hwnd, edit_id)) |edit| {
                 _ = c.SetWindowTextW(edit, state.initial);
-                _ = SendMessageW(edit, EM_SETSEL, 0, -1);
+                _ = c.SendMessageW(edit, EM_SETSEL, 0, -1);
             }
             centerOnOwner(hwnd);
             return 1;
@@ -381,19 +403,17 @@ fn promptProc(hwnd: c.HWND, msg: c.UINT, wparam: c.WPARAM, lparam: c.LPARAM) cal
             const id: c_int = @intCast(wparam & 0xFFFF);
             switch (id) {
                 IDOK => {
-                    if (GetDlgItem(hwnd, edit_id)) |edit| {
-                        const len: usize = @intCast(@max(0, GetWindowTextLengthW(edit)));
-                        if (state.alloc.allocSentinel(u16, len, 0)) |buf| {
-                            const n: usize = @intCast(@max(0, GetWindowTextW(edit, buf.ptr, @intCast(len + 1))));
-                            buf[n] = 0;
-                            state.result = buf[0..n :0];
-                        } else |err| log.warn("error reading title err={}", .{err});
+                    if (c.GetDlgItem(hwnd, edit_id)) |edit| {
+                        state.result = c.getWindowTextUtf8(state.alloc, edit) catch |err| blk: {
+                            log.warn("error reading title err={}", .{err});
+                            break :blk null;
+                        };
                     }
-                    _ = EndDialog(hwnd, IDOK);
+                    _ = c.EndDialog(hwnd, IDOK);
                     return 1;
                 },
                 IDCANCEL => {
-                    _ = EndDialog(hwnd, IDCANCEL);
+                    _ = c.EndDialog(hwnd, IDCANCEL);
                     return 1;
                 },
                 else => {},
@@ -405,7 +425,7 @@ fn promptProc(hwnd: c.HWND, msg: c.UINT, wparam: c.WPARAM, lparam: c.LPARAM) cal
 }
 
 fn centerOnOwner(hwnd: c.HWND) void {
-    const owner = GetWindow(hwnd, GW_OWNER) orelse return;
+    const owner = c.GetWindow(hwnd, GW_OWNER) orelse return;
     var outer: c.RECT = .{};
     var dlg: c.RECT = .{};
     if (!c.GetWindowRect(owner, &outer).toBool()) return;
@@ -575,8 +595,8 @@ fn openConfigThread(path: [:0]const u8) void {
     defer if (hr >= 0) c.CoUninitialize();
 
     var exe: [261:0]u16 = @splat(0);
-    if (@intFromPtr(FindExecutableW(wide, null, &exe)) > 32) {
-        const result = ShellExecuteW(null, L("open"), wide, null, null, c.SW_SHOWNORMAL);
+    if (@intFromPtr(c.FindExecutableW(wide, null, &exe)) > 32) {
+        const result = c.ShellExecuteW(null, L("open"), wide, null, null, c.SW_SHOWNORMAL);
         if (@intFromPtr(result) > 32) {
             log.debug("opened config path={s}", .{path});
             return;
@@ -615,10 +635,10 @@ fn runEditor(alloc: Allocator, path: []const u8) !void {
 pub fn exportTerminalIO(surface: *Surface, contents: []const u8) !bool {
     const alloc = surface.app.core_app.alloc;
     var raw_dlg: ?*anyopaque = null;
-    const hr = CoCreateInstance(
+    const hr = c.CoCreateInstance(
         &CLSID_FileSaveDialog,
         null,
-        CLSCTX_INPROC_SERVER,
+        c.CLSCTX_INPROC_SERVER,
         &IID_IFileDialog,
         &raw_dlg,
     );
@@ -627,7 +647,7 @@ pub fn exportTerminalIO(surface: *Surface, contents: []const u8) !bool {
     defer _ = dlg.lpVtbl.Release(dlg);
 
     _ = dlg.lpVtbl.SetTitle(dlg, L("Export Terminal IO Events"));
-    _ = dlg.lpVtbl.SetFileName(dlg, L("ghostty-terminal-io.txt"));
+    _ = dlg.lpVtbl.SetFileName(dlg, L("anitty-terminal-io.txt"));
     if (dlg.lpVtbl.Show(dlg, surface.window.hwnd) < 0) return true;
 
     var item: ?*IShellItem = null;
@@ -636,7 +656,7 @@ pub fn exportTerminalIO(surface: *Surface, contents: []const u8) !bool {
 
     var wide_path: ?[*:0]u16 = null;
     if (item.?.lpVtbl.GetDisplayName(item.?, SIGDN_FILESYSPATH, &wide_path) < 0 or wide_path == null) return false;
-    defer CoTaskMemFree(wide_path);
+    defer c.CoTaskMemFree(wide_path);
 
     const path_utf8 = try std.unicode.utf16LeToUtf8Alloc(alloc, std.mem.span(wide_path.?));
     defer alloc.free(path_utf8);

@@ -33,7 +33,7 @@ vgcore.*
 
 /sprite_face_test*
 
-# Windows packaging output (dist/windows/make-zip.ps1, installer/ghostty.iss)
+# Windows packaging output (dist/windows/make-zip.ps1, installer/anitty.iss)
 /dist/windows/out/
 
 # Local AI agent notes

@@ -68,7 +68,7 @@ fn initWindows(resources_dir: []const u8) InitError!void {
         "locale",
         matched,
         "LC_MESSAGES",
-        build_config.bundle_id ++ ".mo",
+        "com.mitchellh.ghostty.mo",
     }) catch return error.OutOfMemory;
     defer alloc.free(mo_path);
 

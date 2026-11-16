@@ -10,7 +10,7 @@ const c = @import("c.zig");
 const log = std.log.scoped(.win32);
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
-pub const class_name = L("GhosttySearchOverlay");
+pub const class_name = L("AnittySearchOverlay");
 
 const overlay_width = 320;
 const overlay_height = 36;
@@ -59,10 +59,6 @@ drag_offset: c.POINT = .{},
 
 fn surface(self: *SearchOverlay) *Surface {
     return @alignCast(@fieldParentPtr("search_overlay", self));
-}
-
-fn scale(v: i32, dpi: c.UINT) i32 {
-    return @intCast(@divTrunc(v * @as(i32, @intCast(dpi)), 96));
 }
 
 pub fn create(self: *SearchOverlay, parent: c.HWND, instance: ?c.HINSTANCE) !void {
@@ -123,9 +119,9 @@ pub fn invalidate(self: *SearchOverlay) void {
 }
 
 pub fn rectForCorner(corner: Corner, parent_w: i32, parent_h: i32, dpi: c.UINT, top_inset: i32) c.RECT {
-    const w = @min(scale(overlay_width, dpi), @max(120, parent_w - scale(margin * 2, dpi)));
-    const h = scale(overlay_height, dpi);
-    const m = scale(margin, dpi);
+    const w = @min(c.scaleDpi(overlay_width, dpi), @max(120, parent_w - c.scaleDpi(margin * 2, dpi)));
+    const h = c.scaleDpi(overlay_height, dpi);
+    const m = c.scaleDpi(margin, dpi);
     const left = switch (corner) {
         .top_left, .bottom_left => m,
         .top_right, .bottom_right => @max(m, parent_w - w - m),
@@ -160,11 +156,11 @@ pub fn layout(self: *SearchOverlay) void {
         c.SWP_NOACTIVATE,
     );
     if (self.edit_hwnd) |edit| {
-        const px = scale(pad_x, dpi);
-        const bs = scale(btn_size, dpi);
-        const cw = scale(count_width, dpi);
-        const edit_w = @max(40, w - px * 2 - cw - bs * 3 - scale(8, dpi));
-        const edit_h = @max(16, h - scale(14, dpi));
+        const px = c.scaleDpi(pad_x, dpi);
+        const bs = c.scaleDpi(btn_size, dpi);
+        const cw = c.scaleDpi(count_width, dpi);
+        const edit_w = @max(40, w - px * 2 - cw - bs * 3 - c.scaleDpi(8, dpi));
+        const edit_h = @max(16, h - c.scaleDpi(14, dpi));
         const edit_y = @divTrunc(h - edit_h, 2);
         _ = c.MoveWindow(edit, px, edit_y, edit_w, edit_h, .TRUE);
     }
@@ -246,15 +242,7 @@ fn notifyCurrentText(self: *SearchOverlay) void {
     const edit = self.edit_hwnd orelse return;
     const s = self.surface();
     const alloc = s.app.core_app.alloc;
-    const len: usize = @intCast(@max(0, c.GetWindowTextLengthW(edit)));
-    if (len == 0) {
-        self.notifyNeedle("");
-        return;
-    }
-    const wide = alloc.allocSentinel(u16, len, 0) catch return;
-    defer alloc.free(wide);
-    const n: usize = @intCast(@max(0, c.GetWindowTextW(edit, wide.ptr, @intCast(len + 1))));
-    const utf8 = std.unicode.utf16LeToUtf8Alloc(alloc, wide[0..n]) catch return;
+    const utf8 = c.getWindowTextUtf8(alloc, edit) catch return;
     defer alloc.free(utf8);
     self.notifyNeedle(utf8);
 }
@@ -282,8 +270,8 @@ fn buttonRect(self: *const SearchOverlay, kind: Hit) c.RECT {
     var r: c.RECT = .{};
     _ = c.GetClientRect(hwnd, &r);
     const dpi = c.GetDpiForWindow(hwnd);
-    const bs = scale(btn_size, dpi);
-    const px = scale(pad_x, dpi);
+    const bs = c.scaleDpi(btn_size, dpi);
+    const px = c.scaleDpi(pad_x, dpi);
     const top = @divTrunc((r.bottom - r.top) - bs, 2);
     const idx: i32 = switch (kind) {
         .prev => 3,
@@ -296,8 +284,7 @@ fn buttonRect(self: *const SearchOverlay, kind: Hit) c.RECT {
 
 fn hitAt(self: *const SearchOverlay, x: i32, y: i32) ?Hit {
     inline for (.{ Hit.prev, Hit.next, Hit.close }) |k| {
-        const b = self.buttonRect(k);
-        if (x >= b.left and x < b.right and y >= b.top and y < b.bottom) return k;
+        if (c.rectContains(self.buttonRect(k), x, y)) return k;
     }
     return null;
 }
@@ -330,8 +317,8 @@ fn paint(self: *SearchOverlay, hwnd: c.HWND) void {
     const palette = TabBar.Palette.init(&s.app.config);
     const dpi = c.GetDpiForWindow(hwnd);
 
-    fill(mem, rect, palette.bar);
-    drawBorder(mem, rect, palette.separator);
+    c.fillRectColor(mem, rect, palette.bar);
+    c.drawRectBorder(mem, rect, palette.separator);
 
     _ = c.SetBkMode(mem, c.TRANSPARENT);
     _ = c.SetTextColor(mem, palette.text_inactive);
@@ -341,9 +328,9 @@ fn paint(self: *SearchOverlay, hwnd: c.HWND) void {
     if (count_str.len > 0) {
         const prev_r = self.buttonRect(.prev);
         var count_r: c.RECT = .{
-            .left = prev_r.left - scale(count_width, dpi),
+            .left = prev_r.left - c.scaleDpi(count_width, dpi),
             .top = 0,
-            .right = prev_r.left - scale(4, dpi),
+            .right = prev_r.left - c.scaleDpi(4, dpi),
             .bottom = h,
         };
         var wide_buf: [48]u16 = undefined;
@@ -361,35 +348,19 @@ fn paint(self: *SearchOverlay, hwnd: c.HWND) void {
     inline for (.{ Hit.prev, Hit.next, Hit.close }) |k| {
         const br = self.buttonRect(k);
         const hovered = if (self.hover) |hv| hv == k else false;
-        if (hovered) fill(mem, br, palette.hover);
+        if (hovered) c.fillRectColor(mem, br, palette.hover);
         const color = if (hovered) palette.text else palette.text_inactive;
-        drawIcon(mem, br, k, color, scale(8, dpi));
+        drawIcon(mem, br, k, color, c.scaleDpi(8, dpi));
     }
 
     _ = c.BitBlt(hdc, 0, 0, w, h, mem, 0, 0, c.SRCCOPY);
 }
 
-fn fill(hdc: c.HDC, rect: c.RECT, color: c.COLORREF) void {
-    const brush = c.CreateSolidBrush(color) orelse return;
-    defer _ = c.DeleteObject(brush);
-    _ = c.FillRect(hdc, &rect, brush);
-}
-
-fn drawBorder(hdc: c.HDC, r: c.RECT, color: c.COLORREF) void {
-    const pen = c.CreatePen(c.PS_SOLID, 1, color) orelse return;
-    defer _ = c.DeleteObject(pen);
-    const old = c.SelectObject(hdc, pen);
-    defer if (old) |o| {
-        _ = c.SelectObject(hdc, o);
-    };
-    _ = c.MoveToEx(hdc, r.left, r.top, null);
-    _ = c.LineTo(hdc, r.right - 1, r.top);
-    _ = c.LineTo(hdc, r.right - 1, r.bottom - 1);
-    _ = c.LineTo(hdc, r.left, r.bottom - 1);
-    _ = c.LineTo(hdc, r.left, r.top);
-}
-
 fn drawIcon(hdc: c.HDC, r: c.RECT, kind: Hit, color: c.COLORREF, size: i32) void {
+    if (kind == .close) {
+        c.drawCrossGlyph(hdc, r, color, size, false);
+        return;
+    }
     const pen = c.CreatePen(c.PS_SOLID, 1, color) orelse return;
     defer _ = c.DeleteObject(pen);
     const old = c.SelectObject(hdc, pen);
@@ -410,12 +381,7 @@ fn drawIcon(hdc: c.HDC, r: c.RECT, kind: Hit, color: c.COLORREF, size: i32) void
             _ = c.LineTo(hdc, cx, cy + @divTrunc(half, 2));
             _ = c.LineTo(hdc, cx + half + 1, cy - @divTrunc(half, 2) - 1);
         },
-        .close => {
-            _ = c.MoveToEx(hdc, cx - half, cy - half, null);
-            _ = c.LineTo(hdc, cx + half + 1, cy + half + 1);
-            _ = c.MoveToEx(hdc, cx + half, cy - half, null);
-            _ = c.LineTo(hdc, cx - half - 1, cy + half + 1);
-        },
+        .close => unreachable,
     }
 }
 
@@ -425,9 +391,7 @@ fn editSubclassProc(
     wparam: c.WPARAM,
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *SearchOverlay = @ptrFromInt(ptr);
+    const self = c.userData(SearchOverlay, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     const orig = self.orig_edit_proc orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
@@ -457,16 +421,12 @@ pub fn wndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        const self: *SearchOverlay = @ptrCast(@alignCast(cs.lpCreateParams.?));
+        const self = c.initUserData(SearchOverlay, hwnd, lparam);
         self.hwnd = hwnd;
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const self: *SearchOverlay = @ptrFromInt(ptr);
+    const self = c.userData(SearchOverlay, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         c.WM_PAINT => {
@@ -497,8 +457,8 @@ pub fn wndProc(
         },
 
         c.WM_MOUSEMOVE => {
-            const x: i16 = @bitCast(c.loword(lparam));
-            const y: i16 = @bitCast(c.hiword(lparam));
+            const x = c.xFromLparam(lparam);
+            const y = c.yFromLparam(lparam);
             if (self.dragging) {
                 var pt: c.POINT = .{ .x = x, .y = y };
                 _ = c.ClientToScreen(hwnd, &pt);
@@ -513,10 +473,7 @@ pub fn wndProc(
                 }
                 return 0;
             }
-            if (!self.tracking) {
-                var tme: c.TRACKMOUSEEVENT = .{ .dwFlags = c.TME_LEAVE, .hwndTrack = hwnd };
-                if (c.TrackMouseEvent(&tme).toBool()) self.tracking = true;
-            }
+            c.trackMouseLeave(hwnd, &self.tracking);
             const next = self.hitAt(x, y);
             if (self.hover != next) {
                 self.hover = next;
@@ -535,8 +492,8 @@ pub fn wndProc(
         },
 
         c.WM_LBUTTONDOWN => {
-            const x: i16 = @bitCast(c.loword(lparam));
-            const y: i16 = @bitCast(c.hiword(lparam));
+            const x = c.xFromLparam(lparam);
+            const y = c.yFromLparam(lparam);
             if (self.hitAt(x, y)) |hit| {
                 switch (hit) {
                     .prev => self.navigate(false),

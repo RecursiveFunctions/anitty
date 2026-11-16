@@ -31,23 +31,6 @@ const COPYDATASTRUCT = extern struct {
     lpData: ?*const anyopaque,
 };
 
-extern "user32" fn FindWindowExW(
-    parent: ?c.HWND,
-    child_after: ?c.HWND,
-    class: ?c.LPCWSTR,
-    window: ?c.LPCWSTR,
-) callconv(.winapi) ?c.HWND;
-extern "user32" fn SendMessageTimeoutW(
-    hwnd: c.HWND,
-    msg: c.UINT,
-    wparam: c.WPARAM,
-    lparam: c.LPARAM,
-    flags: c.UINT,
-    timeout: c.UINT,
-    result: ?*usize,
-) callconv(.winapi) c.LRESULT;
-extern "user32" fn AllowSetForegroundWindow(pid: c.DWORD) callconv(.winapi) c.BOOL;
-extern "user32" fn GetWindowThreadProcessId(hwnd: c.HWND, pid: ?*c.DWORD) callconv(.winapi) c.DWORD;
 extern "kernel32" fn ProcessIdToSessionId(pid: c.DWORD, session: *c.DWORD) callconv(.winapi) c.BOOL;
 extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) c.DWORD;
 extern "kernel32" fn GetStdHandle(id: c.DWORD) callconv(.winapi) ?*anyopaque;
@@ -337,7 +320,7 @@ fn className(buf: *[64:0]u16) ![:0]const u16 {
     var session: c.DWORD = 0;
     if (!ProcessIdToSessionId(GetCurrentProcessId(), &session).toBool()) session = 0;
     var utf8: [64]u8 = undefined;
-    const name = try std.mem.print(&utf8, "GhosttyIpc_{d}", .{session});
+    const name = try std.mem.print(&utf8, "AnittyIpc_{d}", .{session});
     const n = try std.unicode.utf8ToUtf16Le(buf, name);
     buf[n] = 0;
     return buf[0..n :0];
@@ -350,14 +333,11 @@ fn wndProc(
     lparam: c.LPARAM,
 ) callconv(.winapi) c.LRESULT {
     if (msg == c.WM_NCCREATE) {
-        const cs: *const c.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        _ = c.SetWindowLongPtrW(hwnd, c.GWLP_USERDATA, @bitCast(@intFromPtr(cs.lpCreateParams)));
+        _ = c.initUserData(App, hwnd, lparam);
         return c.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
-    const ptr: usize = @bitCast(c.GetWindowLongPtrW(hwnd, c.GWLP_USERDATA));
-    if (ptr == 0) return c.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const app: *App = @ptrFromInt(ptr);
+    const app = c.userData(App, hwnd) orelse return c.DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         WM_COPYDATA => {
@@ -401,7 +381,7 @@ pub fn send(
     };
     defer alloc.free(text);
 
-    const hwnd = FindWindowExW(c.HWND_MESSAGE, null, class.ptr, text.ptr) orelse {
+    const hwnd = c.FindWindowExW(c.HWND_MESSAGE, null, class.ptr, text.ptr) orelse {
         log.info("no running instance found, launching a new one", .{});
         return launch(alloc, target, request.arguments);
     };
@@ -410,8 +390,8 @@ pub fn send(
     defer alloc.free(payload);
 
     var pid: c.DWORD = 0;
-    _ = GetWindowThreadProcessId(hwnd, &pid);
-    if (pid != 0) _ = AllowSetForegroundWindow(pid);
+    _ = c.GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != 0) _ = c.AllowSetForegroundWindow(pid);
 
     const cds: COPYDATASTRUCT = .{
         .dwData = version,
@@ -419,7 +399,7 @@ pub fn send(
         .lpData = payload.ptr,
     };
     var result: usize = 0;
-    const ok = SendMessageTimeoutW(
+    const ok = c.SendMessageTimeoutW(
         hwnd,
         WM_COPYDATA,
         0,
@@ -429,7 +409,7 @@ pub fn send(
         &result,
     );
     if (ok == 0 or result != 1) {
-        printError("The running Ghostty instance did not accept the request.\n");
+        printError("The running Anitty instance did not accept the request.\n");
         return error.IPCFailed;
     }
     return true;
@@ -442,7 +422,7 @@ fn launch(
 ) (Allocator.Error || apprt.ipc.Errors)!bool {
     const io = global.io();
     const exe = std.process.executablePathAlloc(io, alloc) catch {
-        printError("Unable to determine the Ghostty executable path.\n");
+        printError("Unable to determine the Anitty executable path.\n");
         return error.IPCFailed;
     };
     defer alloc.free(exe);
@@ -473,8 +453,8 @@ fn launch(
         .stdout = .ignore,
         .stderr = .ignore,
     }) catch |err| {
-        log.warn("unable to launch ghostty err={}", .{err});
-        printError("Unable to launch a new Ghostty instance.\n");
+        log.warn("unable to launch anitty err={}", .{err});
+        printError("Unable to launch a new Anitty instance.\n");
         return error.IPCFailed;
     };
     return true;

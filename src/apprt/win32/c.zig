@@ -1,6 +1,7 @@
 const std = @import("std");
 const windows = std.os.windows;
 
+pub const GUID = windows.GUID;
 pub const HINSTANCE = windows.HINSTANCE;
 pub const HMENU = windows.HMENU;
 pub const HWND = windows.HWND;
@@ -100,6 +101,7 @@ pub const ES_AUTOHSCROLL: DWORD = 0x0080;
 pub const CW_USEDEFAULT: c_int = @bitCast(@as(u32, 0x80000000));
 
 pub const HWND_MESSAGE: HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -3))));
+pub const HWND_NOTOPMOST: HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
 pub const HWND_TOPMOST: HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
 pub const GWLP_USERDATA: c_int = -21;
 
@@ -128,6 +130,7 @@ pub const IDC_NO = makeIntResource(32648);
 pub const IDC_HAND = makeIntResource(32649);
 pub const IDC_APPSTARTING = makeIntResource(32650);
 pub const IDC_HELP = makeIntResource(32651);
+pub const IDI_APPLICATION = makeIntResource(32512);
 
 pub const TRACKMOUSEEVENT = extern struct {
     cbSize: DWORD = @sizeOf(TRACKMOUSEEVENT),
@@ -322,7 +325,7 @@ pub extern "user32" fn GetWindow(hwnd: HWND, cmd: UINT) callconv(.winapi) ?HWND;
 pub const GW_HWNDNEXT: UINT = 2;
 pub const GWL_EXSTYLE: c_int = -20;
 pub const WS_EX_TOPMOST: DWORD = 0x00000008;
-pub const WS_EX_TRANSPARENT: usize = 0x00000020;
+pub const WS_EX_TRANSPARENT: DWORD = 0x00000020;
 pub const WS_EX_TOOLWINDOW: DWORD = 0x00000080;
 pub const WS_EX_APPWINDOW: DWORD = 0x00040000;
 pub const WS_EX_LAYERED: DWORD = 0x00080000;
@@ -348,6 +351,8 @@ pub const HKEY = *opaque {};
 pub const HMONITOR = *opaque {};
 
 pub const HKEY_CURRENT_USER: HKEY = @ptrFromInt(@as(usize, @bitCast(@as(isize, @as(i32, @bitCast(@as(u32, 0x80000001)))))));
+pub const KEY_READ: DWORD = 0x20019;
+pub const RRF_RT_REG_SZ: DWORD = 0x00000002;
 pub const RRF_RT_REG_DWORD: DWORD = 0x00000010;
 
 pub const WM_SETTINGCHANGE: UINT = 0x001A;
@@ -388,6 +393,21 @@ pub const FLASHW_TRAY: DWORD = 0x00000002;
 
 pub const COINIT_APARTMENTTHREADED: DWORD = 0x2;
 pub const COINIT_DISABLE_OLE1DDE: DWORD = 0x4;
+pub const CLSCTX_INPROC_SERVER: DWORD = 0x1;
+pub const CLSCTX_INPROC_HANDLER: DWORD = 0x2;
+pub const CLSCTX_LOCAL_SERVER: DWORD = 0x4;
+pub const S_OK: HRESULT = 0;
+pub const E_NOINTERFACE: HRESULT = @bitCast(@as(u32, 0x80004002));
+pub const INVALID_FILE_ATTRIBUTES: DWORD = 0xFFFF_FFFF;
+pub const MOVEFILE_REPLACE_EXISTING: DWORD = 0x00000001;
+pub const CREATE_NO_WINDOW: DWORD = 0x08000000;
+
+pub const IID_IUnknown: GUID = .{
+    .Data1 = 0x00000000,
+    .Data2 = 0x0000,
+    .Data3 = 0x0000,
+    .Data4 = .{ 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 },
+};
 
 pub const MONITORINFO = extern struct {
     cbSize: DWORD = @sizeOf(MONITORINFO),
@@ -702,3 +722,173 @@ pub extern "user32" fn RegisterPowerSettingNotification(
     flags: DWORD,
 ) callconv(.winapi) ?HPOWERNOTIFY;
 pub extern "user32" fn UnregisterPowerSettingNotification(handle: HPOWERNOTIFY) callconv(.winapi) BOOL;
+
+pub const DLGPROC = *const fn (HWND, UINT, WPARAM, LPARAM) callconv(.winapi) isize;
+
+pub extern "ole32" fn CoCreateInstance(
+    rclsid: *const GUID,
+    outer: ?*anyopaque,
+    clsctx: DWORD,
+    riid: *const GUID,
+    ppv: *?*anyopaque,
+) callconv(.winapi) HRESULT;
+pub extern "ole32" fn CoTaskMemFree(pv: ?*anyopaque) callconv(.winapi) void;
+
+pub extern "advapi32" fn RegOpenKeyExW(
+    key: HKEY,
+    sub_key: ?LPCWSTR,
+    options: DWORD,
+    sam_desired: DWORD,
+    result: *?HKEY,
+) callconv(.winapi) i32;
+pub extern "advapi32" fn RegEnumKeyExW(
+    key: HKEY,
+    index: DWORD,
+    name: [*]u16,
+    name_len: *DWORD,
+    reserved: ?*DWORD,
+    class: ?[*]u16,
+    class_len: ?*DWORD,
+    last_write_time: ?*anyopaque,
+) callconv(.winapi) i32;
+pub extern "advapi32" fn RegCloseKey(key: HKEY) callconv(.winapi) i32;
+
+pub extern "shell32" fn ShellExecuteW(
+    hwnd: ?HWND,
+    op: ?LPCWSTR,
+    file: LPCWSTR,
+    params: ?LPCWSTR,
+    dir: ?LPCWSTR,
+    show: c_int,
+) callconv(.winapi) ?HINSTANCE;
+pub extern "shell32" fn FindExecutableW(file: LPCWSTR, dir: ?LPCWSTR, result: [*]u16) callconv(.winapi) ?HINSTANCE;
+pub extern "shell32" fn Shell_NotifyIconW(message: DWORD, data: *anyopaque) callconv(.winapi) BOOL;
+
+pub extern "kernel32" fn LoadLibraryW(name: LPCWSTR) callconv(.winapi) ?HMODULE;
+pub extern "kernel32" fn CreateDirectoryW(path: LPCWSTR, security: ?*anyopaque) callconv(.winapi) BOOL;
+pub extern "kernel32" fn DeleteFileW(path: LPCWSTR) callconv(.winapi) BOOL;
+pub extern "kernel32" fn MoveFileExW(existing: LPCWSTR, new: ?LPCWSTR, flags: DWORD) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GetSystemDirectoryW(buf: [*]u16, size: UINT) callconv(.winapi) UINT;
+pub extern "kernel32" fn GetFileAttributesW(name: LPCWSTR) callconv(.winapi) DWORD;
+
+pub extern "user32" fn FindWindowExW(
+    parent: ?HWND,
+    child_after: ?HWND,
+    class: ?LPCWSTR,
+    window: ?LPCWSTR,
+) callconv(.winapi) ?HWND;
+pub extern "user32" fn SendMessageTimeoutW(
+    hwnd: HWND,
+    msg: UINT,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    flags: UINT,
+    timeout: UINT,
+    result: ?*usize,
+) callconv(.winapi) LRESULT;
+pub extern "user32" fn AllowSetForegroundWindow(pid: DWORD) callconv(.winapi) BOOL;
+pub extern "user32" fn GetWindowThreadProcessId(hwnd: HWND, pid: ?*DWORD) callconv(.winapi) DWORD;
+pub extern "user32" fn DialogBoxIndirectParamW(
+    instance: ?HINSTANCE,
+    template: *const anyopaque,
+    owner: ?HWND,
+    proc: DLGPROC,
+    param: LPARAM,
+) callconv(.winapi) isize;
+pub extern "user32" fn EndDialog(hwnd: HWND, result: isize) callconv(.winapi) BOOL;
+pub extern "user32" fn GetDlgItem(hwnd: HWND, id: c_int) callconv(.winapi) ?HWND;
+
+pub fn scaleDpi(v: i32, dpi: UINT) i32 {
+    return @intCast(@divTrunc(v * @as(i32, @intCast(dpi)), 96));
+}
+
+pub fn xFromLparam(lparam: LPARAM) i32 {
+    const x: i16 = @bitCast(loword(lparam));
+    return x;
+}
+
+pub fn yFromLparam(lparam: LPARAM) i32 {
+    const y: i16 = @bitCast(hiword(lparam));
+    return y;
+}
+
+pub fn pointFromLparam(lparam: LPARAM) POINT {
+    return .{ .x = xFromLparam(lparam), .y = yFromLparam(lparam) };
+}
+
+pub fn rectContains(r: RECT, x: i32, y: i32) bool {
+    return x >= r.left and x < r.right and y >= r.top and y < r.bottom;
+}
+
+pub fn userData(comptime T: type, hwnd: HWND) ?*T {
+    const ptr: usize = @bitCast(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (ptr == 0) return null;
+    return @ptrFromInt(ptr);
+}
+
+pub fn initUserData(comptime T: type, hwnd: HWND, lparam: LPARAM) *T {
+    const cs: *const CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lparam)));
+    const self: *T = @ptrCast(@alignCast(cs.lpCreateParams.?));
+    _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+    return self;
+}
+
+pub fn fillRectColor(hdc: HDC, rect: RECT, color: COLORREF) void {
+    const brush = CreateSolidBrush(color) orelse return;
+    defer _ = DeleteObject(brush);
+    _ = FillRect(hdc, &rect, brush);
+}
+
+pub fn drawRectBorder(hdc: HDC, r: RECT, color: COLORREF) void {
+    const pen = CreatePen(PS_SOLID, 1, color) orelse return;
+    defer _ = DeleteObject(pen);
+    const old = SelectObject(hdc, pen);
+    defer if (old) |o| {
+        _ = SelectObject(hdc, o);
+    };
+    _ = MoveToEx(hdc, r.left, r.top, null);
+    _ = LineTo(hdc, r.right - 1, r.top);
+    _ = LineTo(hdc, r.right - 1, r.bottom - 1);
+    _ = LineTo(hdc, r.left, r.bottom - 1);
+    _ = LineTo(hdc, r.left, r.top);
+}
+
+pub fn drawLine(hdc: HDC, color: COLORREF, width: c_int, x0: i32, y0: i32, x1: i32, y1: i32) void {
+    const pen = CreatePen(PS_SOLID, width, color) orelse return;
+    defer _ = DeleteObject(pen);
+    const old = SelectObject(hdc, pen);
+    defer if (old) |o| {
+        _ = SelectObject(hdc, o);
+    };
+    _ = MoveToEx(hdc, x0, y0, null);
+    _ = LineTo(hdc, x1, y1);
+}
+
+pub fn drawCrossGlyph(hdc: HDC, r: RECT, color: COLORREF, size: i32, plus: bool) void {
+    const cx = @divTrunc(r.left + r.right, 2);
+    const cy = @divTrunc(r.top + r.bottom, 2);
+    const half = @divTrunc(size, 2);
+    const width: c_int = @max(1, @divTrunc(size, 8));
+    if (plus) {
+        drawLine(hdc, color, width, cx - half, cy, cx + half + 1, cy);
+        drawLine(hdc, color, width, cx, cy - half, cx, cy + half + 1);
+    } else {
+        drawLine(hdc, color, width, cx - half, cy - half, cx + half + 1, cy + half + 1);
+        drawLine(hdc, color, width, cx + half, cy - half, cx - half - 1, cy + half + 1);
+    }
+}
+
+pub fn getWindowTextUtf8(alloc: std.mem.Allocator, hwnd: HWND) ![:0]u8 {
+    const len: usize = @intCast(@max(0, GetWindowTextLengthW(hwnd)));
+    if (len == 0) return try alloc.dupeSentinel(u8, "", 0);
+    const wide = try alloc.allocSentinel(u16, len, 0);
+    defer alloc.free(wide);
+    const n: usize = @intCast(@max(0, GetWindowTextW(hwnd, wide.ptr, @intCast(len + 1))));
+    return try std.unicode.utf16LeToUtf8AllocZ(alloc, wide[0..n]);
+}
+
+pub fn trackMouseLeave(hwnd: ?HWND, tracking: *bool) void {
+    if (tracking.*) return;
+    var tme: TRACKMOUSEEVENT = .{ .dwFlags = TME_LEAVE, .hwndTrack = hwnd };
+    if (TrackMouseEvent(&tme).toBool()) tracking.* = true;
+}

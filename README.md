@@ -1,8 +1,6 @@
-<!-- LOGO -->
 <h1>
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/fe853809-ba8b-400b-83ab-a9a0da25be8a" alt="Logo" width="128">
-  <br>Ghostty for Windows
+  Ghostty for Windows
 </h1>
   <p align="center">
     Unofficial native Win32 port of <a href="https://github.com/ghostty-org/ghostty">Ghostty</a>.

@@ -1,9 +1,9 @@
 <h1>
 <p align="center">
-  Ghostty for Windows
+  Anitty
 </h1>
   <p align="center">
-    Unofficial native Win32 port of <a href="https://github.com/ghostty-org/ghostty">Ghostty</a>.
+    Unofficial native Win32 port of <a href="https://github.com/ghostty-org/ghostty">Ghostty</a> for Windows.
     <br />
     <a href="https://github.com/RecursiveFunctions/ghostty-windows/releases"><img src="https://img.shields.io/github/v/release/RecursiveFunctions/ghostty-windows?label=release&color=0078d4" alt="Latest Release"></a>
     <a href="https://github.com/RecursiveFunctions/ghostty-windows/actions/workflows/release-windows.yml"><img src="https://github.com/RecursiveFunctions/ghostty-windows/actions/workflows/release-windows.yml/badge.svg" alt="Release Windows"></a>

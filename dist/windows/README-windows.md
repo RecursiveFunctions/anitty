@@ -1,6 +1,6 @@
-# Ghostty for Windows
+# Anitty
 
-Ghostty on Windows is a native Win32 application (`-Dapp-runtime=win32`)
+Anitty is a native Win32 application (`-Dapp-runtime=win32`)
 that renders with OpenGL and runs shells through ConPTY. It is
 experimental: the features below work, but see
 [Known issues](#known-issues) before relying on it.

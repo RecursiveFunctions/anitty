@@ -840,6 +840,10 @@ pub fn deinit(self: *Surface) void {
     {
         self.renderer_thread.stop.notify() catch |err|
             log.err("error notifying renderer thread to stop, may stall err={}", .{err});
+        self.app.drainSurfaceMessages(self);
+        while (self.renderer_thread.mailbox.pop(global.io())) |msg| {
+            msg.deinit();
+        }
         self.renderer_thr.join();
     }
 
@@ -847,7 +851,14 @@ pub fn deinit(self: *Surface) void {
     {
         self.io_thread.stop.notify() catch |err|
             log.err("error notifying io thread to stop, may stall err={}", .{err});
+        self.app.drainSurfaceMessages(self);
         self.io_thr.join();
+    }
+
+    // Drain any remaining messages queued while threads were shutting down.
+    self.app.drainSurfaceMessages(self);
+    while (self.renderer_thread.mailbox.pop(global.io())) |msg| {
+        msg.deinit();
     }
 
     // We need to deinit AFTER everything is stopped, since there are

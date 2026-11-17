@@ -53,6 +53,8 @@ ime_state: ime.State = .{},
 focused: bool = false,
 secure_input: bool = false,
 mouse_shape: terminal.MouseShape = .text,
+cursor_handle: ?c.HCURSOR = null,
+mouse_mods: input.Mods = .{},
 mouse_hidden: bool = false,
 mouse_tracking: bool = false,
 mouse_buttons: u16 = 0,
@@ -443,18 +445,21 @@ fn applyFocus(self: *Surface) void {
 }
 
 pub fn setMouseShape(self: *Surface, shape: terminal.MouseShape) void {
+    if (self.mouse_shape == shape and self.cursor_handle != null) return;
     self.mouse_shape = shape;
+    self.cursor_handle = loadCursorForShape(shape);
     if (self.mouse_tracking) _ = c.SetCursor(self.currentCursor());
 }
 
 pub fn setMouseVisibility(self: *Surface, visible: bool) void {
-    self.mouse_hidden = !visible;
+    const hidden = !visible;
+    if (self.mouse_hidden == hidden) return;
+    self.mouse_hidden = hidden;
     if (self.mouse_tracking) _ = c.SetCursor(self.currentCursor());
 }
 
-fn currentCursor(self: *const Surface) ?c.HCURSOR {
-    if (self.mouse_hidden) return null;
-    return c.LoadCursorW(null, switch (self.mouse_shape) {
+fn loadCursorForShape(shape: terminal.MouseShape) ?c.HCURSOR {
+    return c.LoadCursorW(null, switch (shape) {
         .default, .context_menu, .alias, .copy, .zoom_in, .zoom_out => c.IDC_ARROW,
         .help => c.IDC_HELP,
         .pointer => c.IDC_HAND,
@@ -469,6 +474,14 @@ fn currentCursor(self: *const Surface) ?c.HCURSOR {
         .ne_resize, .sw_resize, .nesw_resize => c.IDC_SIZENESW,
         .nw_resize, .se_resize, .nwse_resize => c.IDC_SIZENWSE,
     });
+}
+
+fn currentCursor(self: *Surface) ?c.HCURSOR {
+    if (self.mouse_hidden) return null;
+    if (self.cursor_handle) |h| return h;
+    const h = loadCursorForShape(self.mouse_shape);
+    self.cursor_handle = h;
+    return h;
 }
 
 fn mouseMods(wparam: c.WPARAM) input.Mods {
@@ -489,8 +502,10 @@ fn mouseMove(self: *Surface, wparam: c.WPARAM, lparam: c.LPARAM) void {
     const x = c.xFromLparam(lparam);
     const y = c.yFromLparam(lparam);
     const pos: apprt.CursorPos = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
-    if (pos.x == self.cursor_pos.x and pos.y == self.cursor_pos.y) return;
+    const mods = mouseMods(wparam);
+    if (pos.x == self.cursor_pos.x and pos.y == self.cursor_pos.y and mods.equal(self.mouse_mods)) return;
     self.cursor_pos = pos;
+    self.mouse_mods = mods;
     if (!self.focused and !self.detached and self.app.config.@"focus-follows-mouse") {
         if (self.window.hwnd) |win_hwnd| {
             if (c.GetForegroundWindow() == win_hwnd) {
@@ -501,7 +516,7 @@ fn mouseMove(self: *Surface, wparam: c.WPARAM, lparam: c.LPARAM) void {
     }
     if (self.overlay.pill_len > 0) self.overlay.refreshPill();
     if (!self.initialized) return;
-    self.core_surface.cursorPosCallback(pos, mouseMods(wparam)) catch |err| {
+    self.core_surface.cursorPosCallback(pos, mods) catch |err| {
         log.warn("error in cursor pos callback err={}", .{err});
     };
 }
@@ -876,15 +891,18 @@ fn confirmClipboard(self: *Surface, prompt: ClipboardPrompt, text: []const u8) b
         },
     };
 
-    var end = @min(text.len, 1024);
-    while (end < text.len and end > 0 and (text[end] & 0xC0) == 0x80) end -= 1;
-    const ellipsis = if (end < text.len) "\n…" else "";
-    const message = alloc.print("{s}\n\n{s}{s}", .{ body, text[0..end], ellipsis }) catch return false;
-    defer alloc.free(message);
+    const hide_preview = prompt == .paste and self.secure_input;
+    const message: ?[]u8 = if (hide_preview) null else blk: {
+        var end = @min(text.len, 1024);
+        while (end < text.len and end > 0 and (text[end] & 0xC0) == 0x80) end -= 1;
+        const ellipsis = if (end < text.len) "\n…" else "";
+        break :blk alloc.print("{s}\n\n{s}{s}", .{ body, text[0..end], ellipsis }) catch return false;
+    };
+    defer if (message) |m| alloc.free(m);
 
     return dialogs.confirmUtf8(alloc, if (self.detached) null else self.window.hwnd, .{
         .main = title,
-        .content = message,
+        .content = message orelse body,
         .yes = "Allow",
         .no = "Deny",
         .default_yes = false,

@@ -215,6 +215,14 @@ pub fn getEntry(self: *Collection, index: Index) EntryError!*Entry {
     return list.at(index.idx).getEntry();
 }
 
+/// Return whether the given index refers to a fallback face.
+pub fn isFallback(self: *const Collection, index: Index) bool {
+    if (index.special() != null) return false;
+    const list = self.faces.get(index.style);
+    if (index.idx >= list.len) return false;
+    return list.at(index.idx).getConstEntry().fallback;
+}
+
 /// Get the face from an entry.
 ///
 /// This entry must not be an alias.

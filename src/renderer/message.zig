@@ -105,11 +105,14 @@ pub const Message = union(enum) {
 
     pub fn deinit(self: *const Message) void {
         switch (self.*) {
+            .font_grid => |grid| grid.set.deref(grid.new_key),
             .change_config => |v| {
                 v.impl.deinit();
                 v.alloc.destroy(v.impl);
                 v.alloc.destroy(v.thread);
             },
+            .search_viewport_matches => |v| v.arena.deinit(),
+            .search_selected_match => |v| if (v) |m| m.arena.deinit(),
 
             else => {},
         }

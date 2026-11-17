@@ -138,15 +138,21 @@ pub const Shaper = struct {
             run.grid.lock.lockUncancelable(global.io());
             defer run.grid.lock.unlock(global.io());
 
-            const face = try run.grid.resolver.collection.getFace(run.font_index);
-            const i = if (!face.quirks_disable_default_font_features) 0 else i: {
+            const collection = &run.grid.resolver.collection;
+            const face = try collection.getFace(run.font_index);
+            const start = if (!face.quirks_disable_default_font_features) 0 else start: {
                 // If we are disabling default font features we just offset
                 // our features by the hardcoded items because always
                 // add those at the beginning.
-                break :i default_features.len;
+                break :start default_features.len;
             };
+            const end = if (collection.isFallback(run.font_index))
+                @min(default_features.len, self.hb_feats.len)
+            else
+                self.hb_feats.len;
+            const feats = if (start < end) self.hb_feats[start..end] else &.{};
 
-            harfbuzz.shape(face.hb_font, self.hb_buf, self.hb_feats[i..]);
+            harfbuzz.shape(face.hb_font, self.hb_buf, feats);
         }
 
         // If our buffer is empty, we short-circuit the rest of the work

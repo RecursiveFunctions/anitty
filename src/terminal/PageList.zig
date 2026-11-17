@@ -2740,19 +2740,13 @@ const ReflowCursor = struct {
         // Restore the x position of the cursor.
         self.cursorAbsolute(old_x, 0);
 
-        // Copy our old data. This should NOT fail because we have the
-        // capacity of the old page which already fits the data we requested.
-        self.page.cloneRowFrom(
+        // Copy our old data, falling back to lossy cell copy if managed
+        // memory exceeds capacity.
+        self.page.cloneRowFromLossy(
             old_page,
             self.page_row,
             old_row,
-        ) catch |err| {
-            log.err(
-                "error cloning single row for moveLastRowToNewPage err={}",
-                .{err},
-            );
-            @panic("unexpected copy row failure");
-        };
+        );
 
         // Move any tracked pins from that last row into this new node.
         {
@@ -3337,19 +3331,18 @@ fn resizeWithoutReflowGrowCols(
             )) |_| {
                 copied += 1;
             } else |err| {
-                // I don't THINK this should be possible, because while our
-                // row count may diminish due to the adjustment, our
-                // prior capacity should have been sufficient to hold all the
-                // managed memory.
                 log.warn(
                     "unexpected cloneRowFrom failure during resizeWithoutReflowGrowCols: {}",
                     .{err},
                 );
-
-                // We can actually safely handle this though by exiting
-                // this loop early and cutting our copy short.
-                new_page.size.rows -= 1;
-                break;
+                if (new_page.size.rows == 1) {
+                    new_page.cloneRowFromLossy(page, dst_row, src_row);
+                    copied += 1;
+                } else {
+                    new_page.resetRow(dst_row);
+                    new_page.size.rows -= 1;
+                    break;
+                }
             }
         }
         const y_end = copied;

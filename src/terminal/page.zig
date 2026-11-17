@@ -899,6 +899,57 @@ pub const Page = struct {
         );
     }
 
+    /// Clone a row from another page, falling back to a raw cell copy without
+    /// managed memory (styles, graphemes, hyperlinks) if page capacity is
+    /// exhausted.
+    pub fn cloneRowFromLossy(
+        self: *Page,
+        other: *const Page,
+        dst_row: *Row,
+        src_row: *const Row,
+    ) void {
+        if (self.cloneRowFrom(other, dst_row, src_row)) |_| return else |_| {}
+
+        self.pauseIntegrityChecks(true);
+        defer {
+            self.pauseIntegrityChecks(false);
+            self.assertIntegrity();
+        }
+
+        self.resetRow(dst_row);
+
+        const cell_len = @min(self.size.cols, other.size.cols);
+        const other_cells = src_row.cells.ptr(other.memory)[0..cell_len];
+        const cells = dst_row.cells.ptr(self.memory)[0..cell_len];
+
+        dst_row.wrap = src_row.wrap;
+        dst_row.wrap_continuation = src_row.wrap_continuation;
+        dst_row.semantic_prompt = src_row.semantic_prompt;
+        dst_row.blank = src_row.blank;
+        dst_row.dirty = src_row.dirty;
+
+        for (cells, other_cells) |*dst_cell, *src_cell| {
+            dst_cell.* = src_cell.*;
+            dst_cell.hyperlink = false;
+            dst_cell.style_id = stylepkg.default_id;
+            if (dst_cell.content_tag == .codepoint_grapheme) {
+                dst_cell.content_tag = .codepoint;
+            }
+            if (comptime build_options.kitty_graphics) {
+                if (src_cell.codepoint() == kitty.graphics.unicode.placeholder) {
+                    dst_row.kitty_virtual_placeholder = true;
+                }
+            }
+        }
+
+        if (self.size.cols > other.size.cols and other.size.cols > 0) {
+            const last = &cells[other.size.cols - 1];
+            if (last.wide == .spacer_head) {
+                last.wide = .narrow;
+            }
+        }
+    }
+
     /// Clone a single row from another page into this page, supporting
     /// partial copy. cloneRowFrom calls this.
     pub fn clonePartialRowFrom(
@@ -5305,4 +5356,40 @@ test "Page layout sizes hyperlink map and set independently" {
         const no_set = Page.layout(.{ .cols = 1, .rows = 1, .hyperlink_bytes = 0 });
         try testing.expectEqual(@as(u32, 128), no_set.hyperlink_map_layout.capacity);
     }
+}
+
+test "Page cloneRowFromLossy strips managed memory on capacity exhaustion" {
+    var src = try Page.init(.{
+        .cols = 4,
+        .rows = 1,
+        .styles = 8,
+        .grapheme_bytes = 512,
+    });
+    defer src.deinit();
+
+    const src_rac = src.getRowAndCell(0, 0);
+    src_rac.row.wrap = true;
+    src_rac.cell.* = .init('A');
+    try src.setGraphemes(src_rac.row, src_rac.cell, &.{0x0301});
+
+    // Destination page has 0 grapheme capacity so cloneRowFrom fails
+    var dst = try Page.init(.{
+        .cols = 4,
+        .rows = 1,
+        .styles = 2,
+        .grapheme_bytes = 0,
+    });
+    defer dst.deinit();
+
+    const dst_row = dst.getRow(0);
+    try testing.expectError(error.GraphemeAllocOutOfMemory, dst.cloneRowFrom(&src, dst_row, src_rac.row));
+
+    dst.cloneRowFromLossy(&src, dst_row, src_rac.row);
+    try testing.expect(dst_row.wrap);
+    try testing.expect(!dst_row.grapheme);
+    try testing.expect(!dst_row.styled);
+    try testing.expect(!dst_row.hyperlink);
+    const dst_cell = dst.getCells(dst_row)[0];
+    try testing.expectEqual(@as(u21, 'A'), dst_cell.codepoint());
+    try testing.expect(!dst_cell.hasGrapheme());
 }

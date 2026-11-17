@@ -473,6 +473,34 @@ const ResolvedConfig = struct {
     skip_install: bool = false,
 };
 
+/// Check if CLI arguments contain flags that suppress remote command execution
+/// (`-N`, `-W`, `-O`, `-G`).
+fn hasNonInteractiveArg(args: []const []const u8) bool {
+    const arg_taking_flags = "BbcDEeFIiJLlmOopPQRSWw";
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--")) break;
+        if (arg.len > 1 and arg[0] == '-') {
+            var consumes_next = false;
+            for (arg[1..], 1..) |ch, idx| {
+                switch (ch) {
+                    'N', 'W', 'O', 'G' => return true,
+                    else => {},
+                }
+                if (std.mem.indexOfScalar(u8, arg_taking_flags, ch) != null) {
+                    if (idx == arg.len - 1) consumes_next = true;
+                    break;
+                }
+            }
+            if (consumes_next and i + 1 < args.len) i += 1;
+            continue;
+        }
+        break;
+    }
+    return false;
+}
+
 /// Run `ssh -G <args>` and parse the output for `user`, `hostname`, `port`,
 /// and non-interactive session flags.
 fn resolveDestination(
@@ -493,7 +521,9 @@ fn resolveDestination(
         return null;
     };
     checkExit(result.term, "ssh -G") catch return null;
-    return parseSshConfig(alloc, result.stdout);
+    var cfg = parseSshConfig(alloc, result.stdout) orelse return null;
+    if (hasNonInteractiveArg(args)) cfg.skip_install = true;
+    return cfg;
 }
 
 /// Parse `ssh -G` output for `user`, `hostname` and `port` and return the
@@ -896,4 +926,14 @@ test "sshArgsThroughDestination: strips trailing remote command" {
         try testing.expectEqual(@as(usize, 2), stripped.len);
         try testing.expectEqualStrings("user@example.com", stripped[1]);
     }
+}
+
+test "hasNonInteractiveArg: detects -N, -W, -O, and -G before destination" {
+    const testing = std.testing;
+    try testing.expect(hasNonInteractiveArg(&.{ "-N", "user@example.com" }));
+    try testing.expect(hasNonInteractiveArg(&.{ "-fN", "-L", "8080:localhost:80", "user@example.com" }));
+    try testing.expect(hasNonInteractiveArg(&.{ "-W", "localhost:22", "user@example.com" }));
+    try testing.expect(hasNonInteractiveArg(&.{ "-O", "check", "user@example.com" }));
+    try testing.expect(!hasNonInteractiveArg(&.{ "-p", "2222", "user@example.com", "-N" }));
+    try testing.expect(!hasNonInteractiveArg(&.{ "-o", "SessionType=none", "user@example.com" }));
 }

@@ -305,6 +305,50 @@ fn drainMailbox(self: *App, rt_app: *apprt.App) !void {
     }
 }
 
+/// Drain any pending mailbox messages targeting `surface` so a closing
+/// surface's IO or renderer thread cannot block pushing to a full queue.
+/// Messages for other surfaces are preserved in order.
+fn drainSurfaceMessagesLocked(queue: *Mailbox.Queue, surface: *const Surface) void {
+    var kept: [Mailbox.Queue.capacity_len]Message = undefined;
+    var kept_len: Mailbox.Queue.Size = 0;
+    while (queue.len > 0) {
+        const n = queue.read;
+        queue.read += 1;
+        if (queue.read >= Mailbox.Queue.capacity_len) queue.read -= Mailbox.Queue.capacity_len;
+        queue.len -= 1;
+        const msg = queue.data[n];
+        const drop = switch (msg) {
+            .close => |s| s == surface,
+            .surface_message => |sm| blk: {
+                if (sm.surface == surface) {
+                    sm.message.deinit();
+                    break :blk true;
+                }
+                break :blk false;
+            },
+            .new_window => |nw| nw.parent == surface,
+            .open_config, .quit => false,
+        };
+        if (!drop) {
+            kept[kept_len] = msg;
+            kept_len += 1;
+        }
+    }
+    queue.read = 0;
+    queue.write = kept_len;
+    queue.len = kept_len;
+    for (kept[0..kept_len], 0..) |msg, i| {
+        queue.data[i] = msg;
+    }
+    if (queue.not_full_waiters > 0) queue.cond_not_full.broadcast(global.io());
+}
+
+pub fn drainSurfaceMessages(self: *App, surface: *const Surface) void {
+    self.mailbox.mutex.lockUncancelable(global.io());
+    defer self.mailbox.mutex.unlock(global.io());
+    drainSurfaceMessagesLocked(&self.mailbox, surface);
+}
+
 pub fn closeSurface(self: *App, surface: *Surface) void {
     if (!self.hasSurface(surface)) return;
     surface.close();

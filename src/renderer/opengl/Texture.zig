@@ -91,6 +91,7 @@ pub fn replaceRegion(
 ) Error!void {
     const texbind = self.texture.bind(self.target) catch return error.OpenGLFailed;
     defer texbind.unbind();
+    gl.pixelStore(gl.c.GL_UNPACK_ALIGNMENT, 1) catch return error.OpenGLFailed;
     texbind.subImage2D(
         0,
         @intCast(x),

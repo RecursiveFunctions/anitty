@@ -181,6 +181,16 @@ pub const Message = union(enum) {
             .none, .win32 => void,
         };
     };
+
+    pub fn deinit(self: *const Message) void {
+        switch (self.*) {
+            .kitty_clipboard_read => |req| req.destroy(),
+            .kitty_clipboard_write => |req| req.destroy(),
+            .clipboard_write => |w| w.req.deinit(),
+            .pwd_change => |w| w.deinit(),
+            else => {},
+        }
+    }
 };
 
 /// A surface mailbox.

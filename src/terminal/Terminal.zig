@@ -5017,7 +5017,10 @@ pub fn resize(
         // Replace the alt screen with an empty version. If this fails
         // we just go back to the primary screen. Not great, but best
         // we can do.
-        tw.check(.alternate_screen_init) catch break :alt;
+        tw.check(.alternate_screen_init) catch {
+            self.syncAltScreenModes();
+            break :alt;
+        };
         const replacement = self.screens.getInit(
             self.io(),
             alloc,
@@ -5039,6 +5042,7 @@ pub fn resize(
                 "alternate screen replacement failed, falling back to primary err={}",
                 .{init_err},
             );
+            self.syncAltScreenModes();
             break :alt;
         };
 
@@ -5742,8 +5746,16 @@ pub fn switchScreen(self: *Terminal, key: ScreenSet.Key) !?*Screen {
 
     // Finalize the switch
     self.screens.switchTo(key);
+    self.syncAltScreenModes();
 
     return old;
+}
+
+fn syncAltScreenModes(self: *Terminal) void {
+    const is_alt = self.screens.active_key == .alternate;
+    self.modes.values.alt_screen_legacy = is_alt;
+    self.modes.values.alt_screen = is_alt;
+    self.modes.values.alt_screen_save_cursor_clear_enter = is_alt;
 }
 
 /// Switch screen via a mode switch (e.g. mode 47, 1047, 1049).
@@ -19733,4 +19745,33 @@ test "Terminal: resize grows rows while viewport is scrolled up, cursor not at b
     // the viewport stays scrolled up.
     try t.resize(alloc, .{ .cols = 5, .rows = 6 });
     try testing.expect(t.screens.active.pages.viewport == .pin);
+}
+
+test "Terminal: alt-screen modes stay synchronized across switchScreen and switchScreenMode" {
+    const alloc = testing.allocator;
+    var t = try init(testing.io, alloc, .{ .cols = 10, .rows = 5 });
+    defer t.deinit(alloc);
+
+    try testing.expect(!t.modes.get(.alt_screen_legacy));
+    try testing.expect(!t.modes.get(.alt_screen));
+    try testing.expect(!t.modes.get(.alt_screen_save_cursor_clear_enter));
+
+    try t.switchScreenMode(.@"1049", true);
+    try testing.expect(t.modes.get(.alt_screen_legacy));
+    try testing.expect(t.modes.get(.alt_screen));
+    try testing.expect(t.modes.get(.alt_screen_save_cursor_clear_enter));
+
+    t.modes.save(.alt_screen_save_cursor_clear_enter);
+    try t.switchScreenMode(.@"47", false);
+    try testing.expect(!t.modes.get(.alt_screen_legacy));
+    try testing.expect(!t.modes.get(.alt_screen));
+    try testing.expect(!t.modes.get(.alt_screen_save_cursor_clear_enter));
+
+    const restored = t.modes.restore(.alt_screen_save_cursor_clear_enter);
+    try testing.expect(restored);
+    try t.switchScreenMode(.@"1049", restored);
+    try testing.expectEqual(.alternate, t.screens.active_key);
+    try testing.expect(t.modes.get(.alt_screen_legacy));
+    try testing.expect(t.modes.get(.alt_screen));
+    try testing.expect(t.modes.get(.alt_screen_save_cursor_clear_enter));
 }

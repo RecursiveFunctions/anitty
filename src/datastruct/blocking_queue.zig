@@ -39,7 +39,8 @@ pub fn BlockingQueue(
         pub const Size = u32;
 
         // The bounds of this queue. We recast this to Size so we can do math.
-        const bounds: Size = @intCast(capacity);
+        pub const capacity_len: Size = @intCast(capacity);
+        const bounds: Size = capacity_len;
 
         /// Specifies the timeout for an operation.
         pub const Timeout = union(enum) {

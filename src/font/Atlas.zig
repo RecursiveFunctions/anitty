@@ -930,3 +930,37 @@ test "grow error" {
         try testing.expectEqual(@as(u8, 4), atlas.data[10]);
     }
 }
+
+test "dirtyRowsSince tracks incremental bands and full sync" {
+    var atlas = try init(testing.allocator, 32, .grayscale);
+    defer atlas.deinit(testing.allocator);
+
+    const init_mod = atlas.modified.load(.monotonic);
+    try testing.expect(atlas.dirtyRowsSince(init_mod) == null);
+    try testing.expectEqual(@as(u32, 0), atlas.dirtyRowsSince(0).?.y);
+    try testing.expectEqual(@as(u32, 32), atlas.dirtyRowsSince(0).?.height);
+
+    const reg1 = try atlas.reserve(testing.allocator, 4, 3);
+    const buf1: [12]u8 = @splat(1);
+    atlas.set(reg1, &buf1);
+    const band1 = atlas.dirtyRowsSince(init_mod).?;
+    try testing.expectEqual(reg1.y, band1.y);
+    try testing.expectEqual(@as(u32, 3), band1.height);
+
+    const after1 = atlas.modified.load(.monotonic);
+    const reg2: Region = .{ .x = 2, .y = 10, .width = 2, .height = 5 };
+    const buf2: [10]u8 = @splat(2);
+    atlas.set(reg2, &buf2);
+    const band2 = atlas.dirtyRowsSince(after1).?;
+    try testing.expectEqual(@as(u32, 10), band2.y);
+    try testing.expectEqual(@as(u32, 5), band2.height);
+
+    const combined = atlas.dirtyRowsSince(init_mod).?;
+    try testing.expectEqual(reg1.y, combined.y);
+    try testing.expectEqual(15 - reg1.y, combined.height);
+
+    atlas.clear();
+    const after_clear = atlas.dirtyRowsSince(after1).?;
+    try testing.expectEqual(@as(u32, 0), after_clear.y);
+    try testing.expectEqual(@as(u32, 32), after_clear.height);
+}

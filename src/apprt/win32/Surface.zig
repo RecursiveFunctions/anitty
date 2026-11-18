@@ -622,6 +622,10 @@ fn showContextMenu(self: *Surface, hwnd: c.HWND, pt_client: c.POINT) void {
     appendContextMenuItem(alloc, menu, true, .toggle_inspector, i18n._("Toggle Terminal Inspector"), L("Toggle Terminal Inspector"));
     appendContextMenuItem(alloc, menu, true, .command_palette, i18n._("Command Palette"), L("Command Palette"));
 
+    if (c.GetCapture() == hwnd) _ = c.ReleaseCapture();
+    self.mouse_buttons = 0;
+    @memset(&self.core_surface.mouse.click_state, .release);
+
     var screen_pt = pt_client;
     _ = c.ClientToScreen(hwnd, &screen_pt);
     const cmd_raw = c.TrackPopupMenuEx(

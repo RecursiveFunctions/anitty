@@ -183,6 +183,8 @@ pub fn show(self: *TabOverview) bool {
     const hwnd = self.hwnd orelse return false;
     const win = self.window();
 
+    if (win.command_palette.visible) win.command_palette.hide();
+
     self.visible = true;
     self.scroll_y = 0;
     self.hover = null;
@@ -363,7 +365,7 @@ fn paint(self: *TabOverview, hwnd: c.HWND) void {
 
     const win = self.window();
     const alloc = win.app.core_app.alloc;
-    const palette = TabBar.Palette.init(&win.app.config);
+    const palette = win.palette();
     const dpi = c.GetDpiForWindow(hwnd);
     const tbh = c.scaleDpi(top_bar_height, dpi);
 
@@ -543,7 +545,7 @@ pub fn wndProc(
         c.WM_CTLCOLOREDIT => {
             const hdc: c.HDC = @ptrFromInt(wparam);
             const win = self.window();
-            const palette = TabBar.Palette.init(&win.app.config);
+            const palette = win.palette();
             return c.handleCtlColorEdit(hdc, palette.text, palette.active, &self.edit_brush);
         },
         c.WM_COMMAND => {

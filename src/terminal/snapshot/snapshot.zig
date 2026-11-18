@@ -493,6 +493,7 @@ pub const Decoder = struct {
                     io_,
                     alloc,
                     screen_options,
+                    result.scrolling_region.right,
                 );
                 errdefer decoded.deinit();
 
@@ -2629,4 +2630,129 @@ test "complete snapshot restore keeps writing into its active page" {
         try testing.expectEqual(@as(usize, 1), primary.pages.totalPages());
         try testing.expectEqual(original.pages.page_size, primary.pages.page_size);
     }
+}
+
+test "DECSLRM pending_wrap survives snapshot round-trip" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var t = try Terminal.init(testing.io, alloc, .{
+        .cols = 24,
+        .rows = 6,
+        .max_scrollback_bytes = null,
+    });
+    defer t.deinit(alloc);
+
+    {
+        var stream = t.vtStream();
+        defer stream.deinit();
+        // Enable left/right margins and print through the right margin so wrap
+        // is pending at 0-based column 4, not the final screen column.
+        stream.nextSlice("\x1b[?69h\x1b[1;5sABCDE");
+        try testing.expect(t.screens.active.cursor.pending_wrap);
+        try testing.expectEqual(@as(u16, 4), t.screens.active.cursor.x);
+
+        // Save that cursor with DECSC without clearing the live pending_wrap.
+        stream.nextSlice("\x1b7");
+        try testing.expect(t.screens.active.saved_cursor != null);
+        try testing.expect(t.screens.active.saved_cursor.?.pending_wrap);
+    }
+
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try encode(alloc, &encoded.writer, &t, test_encode_options);
+
+    var source: std.Io.Reader = .fixed(encoded.written());
+    var decoded = try decode(alloc, testing.io, &source, test_decode_options);
+    defer decoded.deinit(alloc);
+    var restored = decoded.toOwned();
+    defer restored.deinit(alloc);
+
+    try testing.expect(restored.screens.active.cursor.pending_wrap);
+    try testing.expectEqual(@as(u16, 4), restored.screens.active.cursor.x);
+    const saved = restored.screens.active.saved_cursor.?;
+    try testing.expect(saved.pending_wrap);
+    try testing.expectEqual(@as(u16, 4), saved.x);
+}
+
+test "DECSLRM margin scroll preserves semantic_prompt across snapshot" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var a = try Terminal.init(testing.io, alloc, .{
+        .cols = 24,
+        .rows = 6,
+        .max_scrollback_bytes = null,
+    });
+    defer a.deinit(alloc);
+
+    {
+        var stream = a.vtStream();
+        defer stream.deinit();
+        stream.nextSlice("\x1b[?69h");
+    }
+
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try encode(alloc, &encoded.writer, &a, test_encode_options);
+
+    var source: std.Io.Reader = .fixed(encoded.written());
+    var decoded = try decode(alloc, testing.io, &source, test_decode_options);
+    defer decoded.deinit(alloc);
+    var b = decoded.toOwned();
+    defer b.deinit(alloc);
+
+    const sequence =
+        "\x1b]133;A\x07$ " ++
+        "\x1b[2J" ++
+        "\x1b[2S" ++
+        "\x1b[3;12s" ++
+        "\x1bE" ++
+        "\x1b[2S";
+
+    {
+        var stream_a = a.vtStream();
+        defer stream_a.deinit();
+        stream_a.nextSlice(sequence);
+    }
+    {
+        var stream_b = b.vtStream();
+        defer stream_b.deinit();
+        stream_b.nextSlice(sequence);
+    }
+
+    const screen_a = a.screens.active;
+    const screen_b = b.screens.active;
+    try testing.expectEqual(
+        screen_a.pages.scrollbar().total,
+        screen_b.pages.scrollbar().total,
+    );
+
+    var pin_a = screen_a.pages.getTopLeft(.screen);
+    var pin_b = screen_b.pages.getTopLeft(.screen);
+    while (true) {
+        const row_a = pin_a.rowAndCell().row;
+        const row_b = pin_b.rowAndCell().row;
+        try testing.expectEqual(row_a.semantic_prompt, row_b.semantic_prompt);
+        const next_a = pin_a.down(1) orelse break;
+        const next_b = pin_b.down(1) orelse break;
+        pin_a = next_a;
+        pin_b = next_b;
+    }
+
+    {
+        var stream_a = a.vtStream();
+        defer stream_a.deinit();
+        stream_a.nextSlice("\x1b[?2J");
+    }
+    {
+        var stream_b = b.vtStream();
+        defer stream_b.deinit();
+        stream_b.nextSlice("\x1b[?2J");
+    }
+
+    try testing.expectEqual(
+        a.screens.active.pages.scrollbar().total,
+        b.screens.active.pages.scrollbar().total,
+    );
 }

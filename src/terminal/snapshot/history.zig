@@ -540,6 +540,7 @@ test "HISTORY encodes newest first and restores complete history" {
             .rows = screen_rows,
             .max_scrollback_bytes = null,
         },
+        null,
     );
     defer decoded_screen.deinit();
     try std.testing.expectEqual(
@@ -609,6 +610,7 @@ test "HISTORY encodes newest first and restores complete history" {
             .rows = screen_rows,
             .max_scrollback_bytes = null,
         },
+        null,
     );
     defer decoded_truncated.deinit();
     const truncated = &decoded_truncated.screen;
@@ -656,6 +658,7 @@ test "HISTORY encodes newest first and restores complete history" {
             .rows = screen_rows,
             .max_scrollback_bytes = null,
         },
+        null,
     );
     defer decoded_partial.deinit();
     const partial = &decoded_partial.screen;
@@ -726,6 +729,7 @@ test "HISTORY decode compresses history pages when requested" {
             std.testing.io,
             alloc,
             screen_options,
+            null,
         );
         defer decoded_screen.deinit();
         const restored = &decoded_screen.screen;

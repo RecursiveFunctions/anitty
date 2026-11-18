@@ -163,6 +163,8 @@ pub fn show(self: *CommandPalette) bool {
     const win = self.window();
     const alloc = win.app.core_app.alloc;
 
+    if (win.tab_overview.visible) win.tab_overview.hide();
+
     self.populate(alloc) catch |err| {
         log.warn("failed to populate command palette err={}", .{err});
         return false;
@@ -442,7 +444,7 @@ fn paint(self: *CommandPalette, hwnd: c.HWND) void {
 
     const win = self.window();
     const alloc = win.app.core_app.alloc;
-    const palette = TabBar.Palette.init(&win.app.config);
+    const palette = win.palette();
     const dpi = c.GetDpiForWindow(hwnd);
     const hh = c.scaleDpi(header_height, dpi);
     const rh = c.scaleDpi(row_height, dpi);
@@ -613,7 +615,7 @@ pub fn wndProc(
         c.WM_CTLCOLOREDIT => {
             const hdc: c.HDC = @ptrFromInt(wparam);
             const win = self.window();
-            const palette = TabBar.Palette.init(&win.app.config);
+            const palette = win.palette();
             return c.handleCtlColorEdit(hdc, palette.text, palette.active, &self.edit_brush);
         },
         c.WM_COMMAND => {

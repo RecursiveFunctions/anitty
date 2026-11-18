@@ -658,7 +658,7 @@ fn paintPill(self: *SurfaceOverlay, hwnd: c.HWND) void {
     if (w <= 0 or h <= 0 or self.pill_len == 0) return;
 
     const s = self.surface();
-    const palette = TabBar.Palette.init(&s.app.config);
+    const palette = TabBar.Palette.initWithDynamic(&s.app.config, s.dynamic_bg, s.dynamic_fg);
     const dpi = c.GetDpiForWindow(hwnd);
 
     c.fillRectColor(hdc, rect, palette.bar);
@@ -701,7 +701,7 @@ fn paintScrollbar(self: *SurfaceOverlay, hwnd: c.HWND) void {
     if (w <= 0 or h <= 0) return;
 
     const s = self.surface();
-    const palette = TabBar.Palette.init(&s.app.config);
+    const palette = TabBar.Palette.initWithDynamic(&s.app.config, s.dynamic_bg, s.dynamic_fg);
     const dpi = c.GetDpiForWindow(hwnd);
     c.fillRectColor(hdc, rect, palette.active);
 
@@ -814,7 +814,7 @@ fn paintResize(self: *SurfaceOverlay, hwnd: c.HWND) void {
     if (w <= 0 or h <= 0 or self.resize_len == 0) return;
 
     const s = self.surface();
-    const palette = TabBar.Palette.init(&s.app.config);
+    const palette = TabBar.Palette.initWithDynamic(&s.app.config, s.dynamic_bg, s.dynamic_fg);
     const dpi = c.GetDpiForWindow(hwnd);
 
     c.fillRectColor(hdc, rect, palette.bar);

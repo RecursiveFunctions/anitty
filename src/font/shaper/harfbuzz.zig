@@ -139,7 +139,10 @@ pub const Shaper = struct {
             defer run.grid.lock.unlock(global.io());
 
             const collection = &run.grid.resolver.collection;
-            const face = try collection.getFace(run.font_index);
+            const face = collection.getFace(run.font_index) catch |err| face: {
+                log.warn("unable to load face for shaping err={}", .{err});
+                break :face try collection.getFace(.{ .style = .regular, .idx = 0 });
+            };
             const start = if (!face.quirks_disable_default_font_features) 0 else start: {
                 // If we are disabling default font features we just offset
                 // our features by the hardcoded items because always

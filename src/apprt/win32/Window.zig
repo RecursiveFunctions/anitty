@@ -377,6 +377,23 @@ pub fn activeSurface(self: *const Window) ?*Surface {
     return self.tabs.items[self.active].focused;
 }
 
+pub fn palette(self: *const Window) TabBar.Palette {
+    const s = self.activeSurface();
+    return .initWithDynamic(
+        &self.app.config,
+        if (s) |surf| surf.dynamic_bg else null,
+        if (s) |surf| surf.dynamic_fg else null,
+    );
+}
+
+fn syncOverlaysOnTabChange(self: *Window) void {
+    if (self.command_palette.visible) self.command_palette.hide();
+    if (self.tab_overview.visible) {
+        self.tab_overview.refreshFilter();
+        self.tab_overview.invalidate();
+    }
+}
+
 pub fn tabIndex(self: *const Window, surface: *const Surface) ?usize {
     for (self.tabs.items, 0..) |*tab, i| {
         if (tab.tree.locate(surface) != null) return i;
@@ -452,6 +469,7 @@ fn activate(self: *Window, index: usize, prev: ?*Surface) void {
     const focus = self.shouldFocus(prev);
     if (index != self.active) self.cancelDrag();
     self.active = index;
+    self.syncOverlaysOnTabChange();
     self.layout();
     if (focus) self.focusActive();
     self.updateDwmColors(self.app.chrome);
@@ -846,6 +864,7 @@ fn removeTab(self: *Window, index: usize) void {
     }
     if (!recorded) self.destroyTab(tab);
 
+    self.syncOverlaysOnTabChange();
     self.layout();
     self.tab_bar.invalidate();
     self.refreshTitle();
@@ -874,6 +893,7 @@ pub fn closeSurface(self: *Window, surface: *Surface) void {
     }
     self.replaceTree(tab, tree);
     tab.focused = next;
+    self.syncOverlaysOnTabChange();
     self.layout();
     if (focus) self.focusActive();
     self.tab_bar.invalidate();
@@ -1350,19 +1370,29 @@ pub fn setInitialSize(self: *Window, width: u32, height: u32) void {
     );
 }
 
+fn configuredOuterSize(self: *const Window, hwnd: c.HWND, surface: *const Surface) c.POINT {
+    const config = &self.app.config;
+    const bar_h: u32 = @intCast(self.tabBarHeight());
+    var size = self.defaultGridOuterSize(hwnd, surface, bar_h);
+    if (self.default_size) |def| {
+        const scale = @as(f32, @floatFromInt(c.GetDpiForWindow(hwnd))) / 96.0;
+        if (config.@"window-width" > 0) {
+            const client_w: u32 = @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(def.width)) * scale)));
+            size.x = outerSize(hwnd, client_w, 1).x;
+        }
+        if (config.@"window-height" > 0) {
+            const client_h: u32 = @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(def.height)) * scale))) + bar_h;
+            size.y = outerSize(hwnd, 1, client_h).y;
+        }
+    }
+    return size;
+}
+
 pub fn resetWindowSize(self: *Window) bool {
     const hwnd = self.hwnd orelse return false;
     if (self.fullscreen_saved != null or self.is_quick_terminal or c.IsZoomed(hwnd).toBool()) return false;
     const surface = self.activeSurface() orelse return false;
-    const config = &self.app.config;
-    const bar_h: u32 = @intCast(self.tabBarHeight());
-    const size: c.POINT = if (self.default_size) |def| size: {
-        if (config.@"window-width" == 0 or config.@"window-height" == 0) break :size self.defaultGridOuterSize(hwnd, surface, bar_h);
-        const scale = @as(f32, @floatFromInt(c.GetDpiForWindow(hwnd))) / 96.0;
-        const client_w: u32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(def.width)) * scale));
-        const client_h: u32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(def.height)) * scale));
-        break :size outerSize(hwnd, client_w, client_h + bar_h);
-    } else self.defaultGridOuterSize(hwnd, surface, bar_h);
+    const size = self.configuredOuterSize(hwnd, surface);
 
     var r: c.RECT = .{ .right = size.x, .bottom = size.y };
     clampToMonitorWorkArea(c.MonitorFromWindow(hwnd, c.MONITOR_DEFAULTTONEAREST), &r);
@@ -1423,8 +1453,7 @@ fn place(self: *Window, prev: ?*Window) void {
     var w = rect.right - rect.left;
     var h = rect.bottom - rect.top;
     if (config.@"window-width" == 0 or config.@"window-height" == 0) {
-        const bar_h: u32 = @intCast(self.tabBarHeight());
-        const size = self.defaultGridOuterSize(hwnd, surface, bar_h);
+        const size = self.configuredOuterSize(hwnd, surface);
         w = size.x;
         h = size.y;
     }
@@ -1510,7 +1539,7 @@ fn snapSizingRect(self: *const Window, edge: c.WPARAM, rect: *c.RECT) void {
 }
 
 fn tabBarHeight(self: *const Window) i32 {
-    return if (self.tabBarVisible(self.tabs.items.len)) self.tab_bar.height() else 0;
+    return if (self.tabBarVisible(@max(1, self.tabs.items.len))) self.tab_bar.height() else 0;
 }
 
 fn layout(self: *Window) void {

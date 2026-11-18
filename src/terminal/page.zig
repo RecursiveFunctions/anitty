@@ -989,6 +989,7 @@ pub const Page = struct {
                 copy.grapheme = dst_row.grapheme;
                 copy.hyperlink = dst_row.hyperlink;
                 copy.styled = dst_row.styled;
+                copy.semantic_prompt = dst_row.semantic_prompt;
 
                 // Empty only if both the copied and kept parts were.
                 copy.blank = dst_row.blank and src_row.blank;
@@ -1202,6 +1203,7 @@ pub const Page = struct {
                 copy.grapheme = dst_row.grapheme;
                 copy.hyperlink = dst_row.hyperlink;
                 copy.styled = dst_row.styled;
+                copy.semantic_prompt = dst_row.semantic_prompt;
                 copy.blank = dst_row.blank and src_row.blank;
                 copy.dirty |= dst_row.dirty;
             } else {

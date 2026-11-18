@@ -324,12 +324,7 @@ fn releaseBackbuffer(self: *TabBar) void {
 
 fn draw(self: *TabBar, hdc: c.HDC, rect: c.RECT) void {
     const win = self.window();
-    const active_surf = win.activeSurface();
-    const palette: Palette = .initWithDynamic(
-        &win.app.config,
-        if (active_surf) |s| s.dynamic_bg else null,
-        if (active_surf) |s| s.dynamic_fg else null,
-    );
+    const palette = win.palette();
     const layout = Layout.init(self) orelse return;
 
     c.fillRectColor(hdc, rect, palette.bar);
@@ -951,12 +946,7 @@ pub fn wndProc(
         c.WM_CTLCOLOREDIT => {
             const hdc: c.HDC = @ptrFromInt(wparam);
             const win = self.window();
-            const active_surf = win.activeSurface();
-            const palette: Palette = .initWithDynamic(
-                &win.app.config,
-                if (active_surf) |s| s.dynamic_bg else null,
-                if (active_surf) |s| s.dynamic_fg else null,
-            );
+            const palette = win.palette();
             return c.handleCtlColorEdit(hdc, palette.text, palette.active, &self.edit_brush);
         },
 

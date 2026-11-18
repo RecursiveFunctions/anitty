@@ -492,7 +492,7 @@ pub fn initAtlasTexture(
     const format: gl.Texture.Format, const internal_format: gl.Texture.InternalFormat =
         switch (atlas.format) {
             .grayscale => .{ .red, .red },
-            .bgra => .{ .bgra, .srgba },
+            .bgra => .{ .bgra, .rgba },
             else => @panic("unsupported atlas format for OpenGL texture"),
         };
 

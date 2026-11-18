@@ -350,7 +350,7 @@ pub fn initAtlasTexture(
 ) Texture.Error!Texture {
     const pixel_format: mtl.MTLPixelFormat = switch (atlas.format) {
         .grayscale => .r8unorm,
-        .bgra => .bgra8unorm_srgb,
+        .bgra => .bgra8unorm,
         else => @panic("unsupported atlas format for Metal texture"),
     };
 

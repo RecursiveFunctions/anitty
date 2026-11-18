@@ -164,68 +164,47 @@ pub fn exportDmabuf(
     display: *egl.Display,
     context: *egl.Context,
 ) !Dmabuf {
-    // We disable GL_FRAMEBUFFER_SRGB while doing this blit, otherwise
-    // the values may be linearized as they're copied, but even though
-    // the draw framebuffer has a linear internal format, the values in
-    // it should be sRGB, not linear!
-    try gl.disable(gl.c.GL_FRAMEBUFFER_SRGB);
-    defer gl.enable(gl.c.GL_FRAMEBUFFER_SRGB) catch |err| {
-        log.err("Error re-enabling GL_FRAMEBUFFER_SRGB, err={}", .{err});
-    };
+    if (comptime is_windows) {
+        _ = .{ self, display, context };
+        return error.ExportUnavailable;
+    } else {
+        try self.blitToExport();
 
-    const read_bind = try self.framebuffer.bind(.read);
-    defer read_bind.unbind();
+        const image: *egl.Image = try .create(
+            display,
+            context,
+            .{ .texture_2d = self.export_texture.id },
+            &.{},
+        );
+        defer image.destroy(display) catch {};
 
-    const draw_bind = try self.export_framebuffer.bind(.draw);
-    defer draw_bind.unbind();
+        const query = try image.exportDmabufQuery(display);
 
-    try gl.blitFramebuffer(
-        0,
-        0,
-        @intCast(self.width),
-        @intCast(self.height),
-        0,
-        0,
-        @intCast(self.width),
-        @intCast(self.height),
-        .{ .color_buffer_bit = true },
-        .nearest,
-    );
+        if (query.num_planes < 1 or query.num_planes > Dmabuf.max_planes) {
+            log.err("DMABUF has too many planes={}", .{query.num_planes});
+            return error.DmabufTooManyPlanes;
+        }
 
-    const image: *egl.Image = try .create(
-        display,
-        context,
-        .{ .texture_2d = self.export_texture.id },
-        &.{},
-    );
-    defer image.destroy(display) catch {};
+        var planes: Dmabuf.Planes = .{ .count = @intCast(query.num_planes) };
+        try image.exportDmabuf(
+            display,
+            &planes.fds,
+            &planes.strides,
+            &planes.offsets,
+        );
+        try planes.validate();
 
-    const query = try image.exportDmabufQuery(display);
-
-    if (query.num_planes < 1 or query.num_planes > Dmabuf.max_planes) {
-        log.err("DMABUF has too many planes={}", .{query.num_planes});
-        return error.DmabufTooManyPlanes;
+        return .{
+            .width = @intCast(self.width),
+            .height = @intCast(self.height),
+            // bitCast instead of intCast since the numerical value of fourccs
+            // is rather meaningless, and we only care about the bit pattern
+            .fourcc = @bitCast(query.fourcc),
+            .modifier = query.modifier,
+            .premultiplied = true,
+            .planes = planes,
+        };
     }
-
-    var planes: Dmabuf.Planes = .{ .count = @intCast(query.num_planes) };
-    try image.exportDmabuf(
-        display,
-        &planes.fds,
-        &planes.strides,
-        &planes.offsets,
-    );
-    try planes.validate();
-
-    return .{
-        .width = @intCast(self.width),
-        .height = @intCast(self.height),
-        // bitCast instead of intCast since the numerical value of fourccs
-        // is rather meaningless, and we only care about the bit pattern
-        .fourcc = @bitCast(query.fourcc),
-        .modifier = query.modifier,
-        .premultiplied = true,
-        .planes = planes,
-    };
 }
 
 /// Read the current contents of the framebuffer into CPU memory.
@@ -235,8 +214,48 @@ pub fn exportDmabuf(
 /// i.e. `width * 4` bytes per row, containing sRGB-encoded values:
 /// `GL_FRAMEBUFFER_SRGB` has no effect on `ReadPixels`, so the stored
 /// values are returned verbatim.
+fn blitToExport(self: *const Self) !void {
+    if (comptime is_windows) {
+        return error.ExportUnavailable;
+    } else {
+        try gl.disable(gl.c.GL_FRAMEBUFFER_SRGB);
+        defer gl.enable(gl.c.GL_FRAMEBUFFER_SRGB) catch |err| {
+            log.err("Error re-enabling GL_FRAMEBUFFER_SRGB, err={}", .{err});
+        };
+
+        const read_bind = try self.framebuffer.bind(.read);
+        defer read_bind.unbind();
+
+        const draw_bind = try self.export_framebuffer.bind(.draw);
+        defer draw_bind.unbind();
+
+        try gl.blitFramebuffer(
+            0,
+            0,
+            @intCast(self.width),
+            @intCast(self.height),
+            0,
+            @intCast(self.height),
+            @intCast(self.width),
+            0,
+            .{ .color_buffer_bit = true },
+            .nearest,
+        );
+    }
+}
+
 pub fn readPixelsAlloc(self: *const Self, alloc: std.mem.Allocator) ![]u8 {
-    const bind = try self.framebuffer.bind(.read);
+    const flip_succeeded = if (comptime is_windows)
+        false
+    else if (self.blitToExport()) |_|
+        true
+    else |err| blk: {
+        log.warn("export blit failed, flipping on the CPU err={}", .{err});
+        break :blk false;
+    };
+
+    const fb = if (flip_succeeded) self.export_framebuffer else self.framebuffer;
+    const bind = try fb.bind(.read);
     defer bind.unbind();
 
     const pixels = try alloc.alloc(u8, self.width * self.height * 4);
@@ -251,6 +270,15 @@ pub fn readPixelsAlloc(self: *const Self, alloc: std.mem.Allocator) ![]u8 {
         .unsigned_byte,
         pixels.ptr,
     );
+
+    if (!flip_succeeded) {
+        const stride = self.width * 4;
+        for (0..self.height / 2) |y| {
+            const top = pixels[y * stride ..][0..stride];
+            const bottom = pixels[(self.height - 1 - y) * stride ..][0..stride];
+            for (top, bottom) |*a, *b| std.mem.swap(u8, a, b);
+        }
+    }
 
     return pixels;
 }

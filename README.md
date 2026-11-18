@@ -29,7 +29,7 @@
 
 ## Recent Changes
 
-Unreleased tip (`8f6f91bac`, `3a7ab0383`) — Discord/upstream bugfixes after `3fb0cc4dd`:
+[`1.4.1-windows.18895.gfb7a033`](https://github.com/RecursiveFunctions/anitty/releases/tag/windows-v1.4.1-windows.18895.gfb7a033) (Nov 17, 2026) — Discord/upstream bugfixes after `3fb0cc4dd`:
 
 - Clear stuck right-click / context-menu mouse state so tmux and other mouse-mode apps stop seeing a held right button.
 - Command Palette and Tab Overview no longer stack; overlays refresh or close when tabs and surfaces change; UI chrome follows OSC 10/11 colors.

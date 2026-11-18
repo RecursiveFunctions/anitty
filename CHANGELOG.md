@@ -7,6 +7,10 @@ Versions follow the Windows packaging string (`1.4.1-windows` and tagged builds 
 
 ## [Unreleased]
 
+## [1.4.1-windows.18895.gfb7a033] — 2026-11-17
+
+Release: [`windows-v1.4.1-windows.18895.gfb7a033`](https://github.com/RecursiveFunctions/anitty/releases/tag/windows-v1.4.1-windows.18895.gfb7a033).
+
 ### Fixed
 
 - **Win32 context menu / mouse reports**: Clear mouse capture, `mouse_buttons`, and `click_state` before `TrackPopupMenuEx` so dismissing a Shift+right-click (or Menu key) context menu no longer leaves the right button stuck “held” in SGR mouse reports (upstream #15260 / #11342).

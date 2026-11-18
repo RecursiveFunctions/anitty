@@ -446,8 +446,7 @@ pub fn decode(
                 .y = y,
                 .cursor_style = header.cursor_style,
                 .pending_wrap = header.cursor_flags.pending_wrap and
-                    (x == row_pin.node.cols() - 1 or
-                        (right_margin != null and x == right_margin.?)),
+                    (x == row_pin.node.cols() - 1 or x == right_margin),
                 .protected = header.cursor_flags.protected,
                 .style = header.cursor_pen,
                 .hyperlink_implicit_id = header.hyperlink_implicit_id,
@@ -864,7 +863,7 @@ pub const SavedCursor = struct {
             .style = self.pen,
             .protected = self.flags.protected,
             .pending_wrap = self.flags.pending_wrap and
-                (x == cols - 1 or (right_margin != null and x == right_margin.?)),
+                (x == cols - 1 or x == right_margin),
             .origin = self.flags.origin,
             .charset = self.charset,
         };
@@ -1785,7 +1784,14 @@ test "framed native SCREEN and PAGE sequence" {
     // The complete sequence restores directly into native Screen/PageList
     // state, including page-local cursor references.
     var restore_source: std.Io.Reader = .fixed(destination.written()[6..]);
-    var decoded = try decode(&restore_source, try record.nextHeader(&restore_source), std.testing.io, std.testing.allocator, .{ .cols = 8, .rows = 8, .max_scrollback_bytes = 0 }, null);
+    var decoded = try decode(
+        &restore_source,
+        try record.nextHeader(&restore_source),
+        std.testing.io,
+        std.testing.allocator,
+        .{ .cols = 8, .rows = 8, .max_scrollback_bytes = 0 },
+        null,
+    );
     defer decoded.deinit();
     try std.testing.expectEqual(TerminalScreenKey.alternate, decoded.key);
     const restored = &decoded.screen;
@@ -2066,7 +2072,14 @@ test "SCREEN encoding preserves a compressed suffix page" {
     try testing.expectEqual(.compressed, node.storage());
 
     var source: std.Io.Reader = .fixed(destination.written());
-    var decoded = try decode(&source, try record.nextHeader(&source), testing.io, testing.allocator, .{ .cols = 8, .rows = 2, .max_scrollback_bytes = 0 }, null);
+    var decoded = try decode(
+        &source,
+        try record.nextHeader(&source),
+        testing.io,
+        testing.allocator,
+        .{ .cols = 8, .rows = 2, .max_scrollback_bytes = 0 },
+        null,
+    );
     defer decoded.deinit();
     try testing.expectEqual(
         @as(u21, 'A'),
@@ -2141,7 +2154,14 @@ test "SCREEN restoration normalizes invalid cursor positions" {
         try page.encode(native_page, &stream);
 
         var source: std.Io.Reader = .fixed(destination.written());
-        var decoded = try decode(&source, try record.nextHeader(&source), std.testing.io, std.testing.allocator, .{ .cols = 2, .rows = 2, .max_scrollback_bytes = 0 }, null);
+        var decoded = try decode(
+            &source,
+            try record.nextHeader(&source),
+            std.testing.io,
+            std.testing.allocator,
+            .{ .cols = 2, .rows = 2, .max_scrollback_bytes = 0 },
+            null,
+        );
         defer decoded.deinit();
 
         try std.testing.expectEqual(case.expected_x, decoded.screen.cursor.x);
@@ -2192,7 +2212,14 @@ test "SCREEN validates pending wrap against a mixed-width cursor page" {
     try page.encode(&narrow_page, &stream);
 
     var source: std.Io.Reader = .fixed(destination.written());
-    var decoded = try decode(&source, try record.nextHeader(&source), std.testing.io, std.testing.allocator, .{ .cols = 8, .rows = 1, .max_scrollback_bytes = 0 }, null);
+    var decoded = try decode(
+        &source,
+        try record.nextHeader(&source),
+        std.testing.io,
+        std.testing.allocator,
+        .{ .cols = 8, .rows = 1, .max_scrollback_bytes = 0 },
+        null,
+    );
     defer decoded.deinit();
 
     try std.testing.expectEqual(@as(u16, 4), decoded.screen.cursor.page_pin.node.cols());
@@ -2242,7 +2269,14 @@ test "SCREEN resizes a decoded max-width page to a narrow width" {
     try page.encode(&wide_page, &stream);
 
     var source: std.Io.Reader = .fixed(destination.written());
-    var decoded = try decode(&source, try record.nextHeader(&source), std.testing.io, std.testing.allocator, .{ .cols = 8, .rows = 1, .max_scrollback_bytes = 0 }, null);
+    var decoded = try decode(
+        &source,
+        try record.nextHeader(&source),
+        std.testing.io,
+        std.testing.allocator,
+        .{ .cols = 8, .rows = 1, .max_scrollback_bytes = 0 },
+        null,
+    );
     defer decoded.deinit();
 
     try decoded.screen.resize(.{ .cols = 2, .rows = 1 });
@@ -2286,7 +2320,14 @@ test "SCREEN clamps a decoded saved cursor to terminal dimensions" {
     );
 
     var source: std.Io.Reader = .fixed(destination.written());
-    var decoded = try decode(&source, try record.nextHeader(&source), std.testing.io, std.testing.allocator, .{ .cols = 2, .rows = 2, .max_scrollback_bytes = 0 }, null);
+    var decoded = try decode(
+        &source,
+        try record.nextHeader(&source),
+        std.testing.io,
+        std.testing.allocator,
+        .{ .cols = 2, .rows = 2, .max_scrollback_bytes = 0 },
+        null,
+    );
     defer decoded.deinit();
 
     const saved = decoded.screen.saved_cursor.?;
@@ -2321,7 +2362,14 @@ test "SCREEN restoration rejects invalid and incomplete sequences" {
             destination.written()[0..fixture_len],
         );
         const header = record.nextHeader(&source) catch continue;
-        var restored = decode(&source, header, std.testing.io, std.testing.allocator, .{ .cols = 2, .rows = 2, .max_scrollback_bytes = 0 }, null) catch continue;
+        var restored = decode(
+            &source,
+            header,
+            std.testing.io,
+            std.testing.allocator,
+            .{ .cols = 2, .rows = 2, .max_scrollback_bytes = 0 },
+            null,
+        ) catch continue;
         restored.deinit();
         try std.testing.expect(false);
     }
@@ -2335,7 +2383,14 @@ test "SCREEN restoration rejects invalid and incomplete sequences" {
         var source: std.Io.Reader = .fixed(destination.written());
         try std.testing.expectError(
             error.OutOfMemory,
-            decode(&source, try record.nextHeader(&source), std.testing.io, failing.allocator(), .{ .cols = 2, .rows = 2, .max_scrollback_bytes = 0 }, null),
+            decode(
+                &source,
+                try record.nextHeader(&source),
+                std.testing.io,
+                failing.allocator(),
+                .{ .cols = 2, .rows = 2, .max_scrollback_bytes = 0 },
+                null,
+            ),
         );
     }
 
@@ -2361,7 +2416,14 @@ test "SCREEN restoration rejects invalid and incomplete sequences" {
     var empty_source: std.Io.Reader = .fixed(empty_sequence.written());
     try std.testing.expectError(
         error.InvalidPageCount,
-        decode(&empty_source, try record.nextHeader(&empty_source), std.testing.io, std.testing.allocator, .{ .cols = 2, .rows = 2, .max_scrollback_bytes = 0 }, null),
+        decode(
+            &empty_source,
+            try record.nextHeader(&empty_source),
+            std.testing.io,
+            std.testing.allocator,
+            .{ .cols = 2, .rows = 2, .max_scrollback_bytes = 0 },
+            null,
+        ),
     );
 }
 
@@ -2436,7 +2498,14 @@ test "SCREEN decode ignores an invalid cursor hyperlink" {
     );
 
     var source: std.Io.Reader = .fixed(destination.written());
-    var decoded = try decode(&source, try record.nextHeader(&source), std.testing.io, std.testing.allocator, .{ .cols = 1, .rows = 1 }, null);
+    var decoded = try decode(
+        &source,
+        try record.nextHeader(&source),
+        std.testing.io,
+        std.testing.allocator,
+        .{ .cols = 1, .rows = 1 },
+        null,
+    );
     defer decoded.deinit();
     try std.testing.expectEqual(null, decoded.screen.cursor.hyperlink);
 }
@@ -2501,7 +2570,14 @@ test "SCREEN decode ignores a PAGE with an empty hyperlink URI" {
     try stream.finish();
 
     var source: std.Io.Reader = .fixed(destination.written());
-    var decoded = try decode(&source, try record.nextHeader(&source), std.testing.io, std.testing.allocator, .{ .cols = 1, .rows = 1 }, null);
+    var decoded = try decode(
+        &source,
+        try record.nextHeader(&source),
+        std.testing.io,
+        std.testing.allocator,
+        .{ .cols = 1, .rows = 1 },
+        null,
+    );
     defer decoded.deinit();
 
     try std.testing.expectEqual(

@@ -16,6 +16,7 @@ const dialogs = @import("dialogs.zig");
 const ime = @import("ime.zig");
 const SearchOverlay = @import("SearchOverlay.zig");
 const SurfaceOverlay = @import("SurfaceOverlay.zig");
+const TabBar = @import("TabBar.zig");
 const InspectorWindow = @import("InspectorWindow.zig");
 const DropTarget = @import("DropTarget.zig");
 const i18n = @import("../../os/main.zig").i18n;
@@ -258,6 +259,10 @@ pub fn setTitle(self: *Surface, title: [:0]const u8) !void {
     if (!self.detached) self.window.surfaceTitleChanged(self);
 }
 
+pub fn palette(self: *const Surface) TabBar.Palette {
+    return .initWithDynamic(&self.app.config, self.dynamic_bg, self.dynamic_fg);
+}
+
 pub fn setColorChange(self: *Surface, change: apprt.action.ColorChange) void {
     const color: configpkg.Config.Color = .{
         .r = change.r,
@@ -269,6 +274,8 @@ pub fn setColorChange(self: *Surface, change: apprt.action.ColorChange) void {
         .foreground => self.dynamic_fg = color,
         else => return,
     }
+    self.search_overlay.invalidate();
+    self.overlay.invalidate();
     if (!self.detached) self.window.surfaceColorChanged(self);
 }
 

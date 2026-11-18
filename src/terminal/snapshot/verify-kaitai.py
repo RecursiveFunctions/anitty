@@ -486,7 +486,11 @@ def validate_complete_snapshot(snapshot: Any, data: bytes) -> None:
             or header.cursor_y >= terminal_header.rows
             or (
                 header.cursor_flags.pending_wrap
-                and header.cursor_x != terminal_header.columns - 1
+                and header.cursor_x
+                not in (
+                    terminal_header.columns - 1,
+                    terminal_header.scrolling_region.right,
+                )
             )
         ):
             raise ValueError(f"SCREEN key {header.key}: invalid cursor position")

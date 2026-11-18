@@ -165,6 +165,12 @@ pub fn deinit(self: *SurfaceOverlay, alloc: Allocator) void {
     self.font = null;
 }
 
+pub fn invalidate(self: *SurfaceOverlay) void {
+    if (self.pill_hwnd) |h| _ = c.InvalidateRect(h, null, .FALSE);
+    if (self.scrollbar_hwnd) |h| _ = c.InvalidateRect(h, null, .FALSE);
+    if (self.resize_hwnd) |h| _ = c.InvalidateRect(h, null, .FALSE);
+}
+
 pub fn updateFont(self: *SurfaceOverlay) void {
     const hwnd = self.banner_hwnd orelse return;
     var ncm: c.NONCLIENTMETRICSW = .{};
@@ -658,7 +664,7 @@ fn paintPill(self: *SurfaceOverlay, hwnd: c.HWND) void {
     if (w <= 0 or h <= 0 or self.pill_len == 0) return;
 
     const s = self.surface();
-    const palette = TabBar.Palette.initWithDynamic(&s.app.config, s.dynamic_bg, s.dynamic_fg);
+    const palette = s.palette();
     const dpi = c.GetDpiForWindow(hwnd);
 
     c.fillRectColor(hdc, rect, palette.bar);
@@ -701,7 +707,7 @@ fn paintScrollbar(self: *SurfaceOverlay, hwnd: c.HWND) void {
     if (w <= 0 or h <= 0) return;
 
     const s = self.surface();
-    const palette = TabBar.Palette.initWithDynamic(&s.app.config, s.dynamic_bg, s.dynamic_fg);
+    const palette = s.palette();
     const dpi = c.GetDpiForWindow(hwnd);
     c.fillRectColor(hdc, rect, palette.active);
 
@@ -814,7 +820,7 @@ fn paintResize(self: *SurfaceOverlay, hwnd: c.HWND) void {
     if (w <= 0 or h <= 0 or self.resize_len == 0) return;
 
     const s = self.surface();
-    const palette = TabBar.Palette.initWithDynamic(&s.app.config, s.dynamic_bg, s.dynamic_fg);
+    const palette = s.palette();
     const dpi = c.GetDpiForWindow(hwnd);
 
     c.fillRectColor(hdc, rect, palette.bar);

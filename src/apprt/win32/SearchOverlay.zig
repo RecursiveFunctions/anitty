@@ -314,7 +314,7 @@ fn paint(self: *SearchOverlay, hwnd: c.HWND) void {
     };
 
     const s = self.surface();
-    const palette = TabBar.Palette.init(&s.app.config);
+    const palette = s.palette();
     const dpi = c.GetDpiForWindow(hwnd);
 
     c.fillRectColor(mem, rect, palette.bar);
@@ -439,7 +439,7 @@ pub fn wndProc(
         c.WM_CTLCOLOREDIT => {
             const hdc: c.HDC = @ptrFromInt(wparam);
             const s = self.surface();
-            const palette = TabBar.Palette.init(&s.app.config);
+            const palette = s.palette();
             return c.handleCtlColorEdit(hdc, palette.text, palette.active, &self.edit_brush);
         },
 

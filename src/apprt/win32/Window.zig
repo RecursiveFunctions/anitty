@@ -378,12 +378,7 @@ pub fn activeSurface(self: *const Window) ?*Surface {
 }
 
 pub fn palette(self: *const Window) TabBar.Palette {
-    const s = self.activeSurface();
-    return .initWithDynamic(
-        &self.app.config,
-        if (s) |surf| surf.dynamic_bg else null,
-        if (s) |surf| surf.dynamic_fg else null,
-    );
+    return if (self.activeSurface()) |s| s.palette() else .init(&self.app.config);
 }
 
 fn syncOverlaysOnTabChange(self: *Window) void {
@@ -456,6 +451,7 @@ pub fn activateTab(self: *Window, index: usize, prev: ?*Surface) void {
 }
 
 pub fn relayout(self: *Window) void {
+    self.syncOverlaysOnTabChange();
     self.layout();
     self.focusActive();
     self.updateDwmColors(self.app.chrome);
@@ -539,6 +535,7 @@ pub fn moveTab(self: *Window, surface: *Surface, amount: isize) bool {
     const tab = self.tabs.orderedRemove(pos);
     self.tabs.insertAssumeCapacity(desired, tab);
     if (active) |a| self.active = self.tabIndex(a) orelse self.active;
+    self.syncOverlaysOnTabChange();
     self.tab_bar.invalidate();
     return true;
 }
@@ -691,6 +688,7 @@ pub fn transferTab(self: *Window, index: usize, target: *Window, at: usize) bool
     } else if (index == self.active) {
         self.activate(@min(index, remaining - 1), null);
     }
+    self.syncOverlaysOnTabChange();
     self.layout();
     self.tab_bar.invalidate();
     self.refreshTitle();
@@ -715,7 +713,12 @@ pub fn surfaceTitleChanged(self: *Window, surface: *Surface) void {
 
 pub fn surfaceColorChanged(self: *Window, surface: *Surface) void {
     self.tab_bar.invalidate();
-    if (self.activeSurface() == surface) self.updateDwmColors(self.app.chrome);
+    if (self.activeSurface() == surface) {
+        self.updateDwmColors(self.app.chrome);
+        if (self.command_palette.visible) self.command_palette.invalidate();
+        if (self.tab_overview.visible) self.tab_overview.invalidate();
+        if (self.hwnd) |hwnd| _ = c.InvalidateRect(hwnd, null, .FALSE);
+    }
 }
 
 pub fn surfaceFocused(self: *Window, surface: *Surface) void {
@@ -922,6 +925,7 @@ fn focusSplit(self: *Window, index: usize, surface: *Surface) void {
     const tab = &self.tabs.items[index];
     const focus = index == self.active and self.shouldFocus(tab.focused);
     self.retarget(tab, surface);
+    self.syncOverlaysOnTabChange();
     self.layout();
     if (focus) self.focusActive();
     self.tab_bar.invalidate();
@@ -1355,10 +1359,14 @@ pub fn setInitialSize(self: *Window, width: u32, height: u32) void {
     self.default_size = .{ .width = width, .height = height };
     const hwnd = self.hwnd orelse return;
     if (c.IsWindowVisible(hwnd).toBool()) return;
-    const scale = @as(f32, @floatFromInt(c.GetDpiForWindow(hwnd))) / 96.0;
-    const client_w: u32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(width)) * scale));
-    const client_h: u32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(height)) * scale));
-    const size = outerSize(hwnd, client_w, client_h + @as(u32, @intCast(self.tabBarHeight())));
+    const size = if (self.activeSurface()) |surface|
+        self.configuredOuterSize(hwnd, surface)
+    else blk: {
+        const scale = @as(f32, @floatFromInt(c.GetDpiForWindow(hwnd))) / 96.0;
+        const client_w: u32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(width)) * scale));
+        const client_h: u32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(height)) * scale));
+        break :blk outerSize(hwnd, client_w, client_h + @as(u32, @intCast(self.tabBarHeight())));
+    };
     _ = c.SetWindowPos(
         hwnd,
         null,
@@ -1445,18 +1453,13 @@ fn defaultGridOuterSize(self: *const Window, hwnd: c.HWND, surface: *const Surfa
 fn place(self: *Window, prev: ?*Window) void {
     const hwnd = self.hwnd orelse return;
     const surface = self.activeSurface() orelse return;
-    const config = &self.app.config;
     const dpi = c.GetDpiForWindow(hwnd);
 
     var rect: c.RECT = .{};
     _ = c.GetWindowRect(hwnd, &rect);
-    var w = rect.right - rect.left;
-    var h = rect.bottom - rect.top;
-    if (config.@"window-width" == 0 or config.@"window-height" == 0) {
-        const size = self.configuredOuterSize(hwnd, surface);
-        w = size.x;
-        h = size.y;
-    }
+    const size = self.configuredOuterSize(hwnd, surface);
+    const w = size.x;
+    const h = size.y;
 
     const anchor = if (prev) |p| p.hwnd orelse hwnd else hwnd;
     const monitor = c.MonitorFromWindow(anchor, c.MONITOR_DEFAULTTONEAREST) orelse return;
@@ -1698,11 +1701,12 @@ fn dividerCursor(self: *Window) ?c.HCURSOR {
 fn paint(self: *Window, hdc: c.HDC, dirty: c.RECT) void {
     const hwnd = self.hwnd orelse return;
     const config = &self.app.config;
+    const pal = self.palette();
     const line = if (config.@"split-divider-color") |color|
         Chrome.colorRef(color)
     else
-        TabBar.Palette.init(config).separator;
-    self.split_view.paint(hdc, dirty, c.GetDpiForWindow(hwnd), Chrome.colorRef(config.background), line);
+        pal.separator;
+    self.split_view.paint(hdc, dirty, c.GetDpiForWindow(hwnd), pal.active, line);
 }
 
 fn handleClose(self: *Window) void {

@@ -833,7 +833,7 @@ fn editSubclassProc(
             }
         },
         c.WM_CHAR => {
-            if (wparam == c.VK_RETURN or wparam == c.VK_ESCAPE) return 0;
+            if (c.isSuppressedEditChar(wparam)) return 0;
         },
         else => {},
     }
@@ -957,11 +957,7 @@ pub fn wndProc(
                 if (active_surf) |s| s.dynamic_bg else null,
                 if (active_surf) |s| s.dynamic_fg else null,
             );
-            _ = c.SetTextColor(hdc, palette.text);
-            _ = c.SetBkColor(hdc, palette.active);
-            if (self.edit_brush) |b| _ = c.DeleteObject(b);
-            self.edit_brush = c.CreateSolidBrush(palette.active);
-            return @bitCast(@intFromPtr(self.edit_brush));
+            return c.handleCtlColorEdit(hdc, palette.text, palette.active, &self.edit_brush);
         },
 
         c.WM_COMMAND => {

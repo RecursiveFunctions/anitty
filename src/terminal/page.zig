@@ -1149,6 +1149,93 @@ pub const Page = struct {
         }
     }
 
+    /// Clone a single row from another page into this page without copying
+    /// any managed memory (graphemes, hyperlinks, or styles). This cannot
+    /// fail and is used as a last-resort fallback when the destination page
+    /// cannot grow its managed-memory capacity any further.
+    pub inline fn cloneRowFromWithoutManagedMemory(
+        self: *Page,
+        other: *const Page,
+        dst_row: *Row,
+        src_row: *const Row,
+    ) void {
+        self.clonePartialRowFromWithoutManagedMemory(
+            other,
+            dst_row,
+            src_row,
+            0,
+            self.size.cols,
+        );
+    }
+
+    /// Clone a partial row from another page into this page without copying
+    /// any managed memory (graphemes, hyperlinks, or styles). This cannot
+    /// fail and is used as a last-resort fallback when the destination page
+    /// cannot grow its managed-memory capacity any further.
+    pub fn clonePartialRowFromWithoutManagedMemory(
+        self: *Page,
+        other: *const Page,
+        dst_row: *Row,
+        src_row: *const Row,
+        x_start: usize,
+        x_end_req: usize,
+    ) void {
+        self.pauseIntegrityChecks(true);
+        defer {
+            self.pauseIntegrityChecks(false);
+            self.assertIntegrity();
+        }
+
+        const cell_len = @min(self.size.cols, other.size.cols);
+        const x_end = @min(x_end_req, cell_len);
+        assert(x_start <= x_end);
+        const other_cells = src_row.cells.ptr(other.memory)[x_start..x_end];
+        const cells = dst_row.cells.ptr(self.memory)[x_start..x_end];
+
+        if (dst_row.managedMemory()) self.clearCells(dst_row, x_start, x_end, .{});
+
+        dst_row.* = copy: {
+            var copy = src_row.*;
+            if ((x_end - x_start) < self.size.cols) {
+                copy.wrap = dst_row.wrap;
+                copy.wrap_continuation = dst_row.wrap_continuation;
+                copy.grapheme = dst_row.grapheme;
+                copy.hyperlink = dst_row.hyperlink;
+                copy.styled = dst_row.styled;
+                copy.blank = dst_row.blank and src_row.blank;
+                copy.dirty |= dst_row.dirty;
+            } else {
+                copy.grapheme = false;
+                copy.hyperlink = false;
+                copy.styled = false;
+            }
+            copy.cells = dst_row.cells;
+            break :copy copy;
+        };
+
+        for (cells, other_cells) |*dst_cell, *src_cell| {
+            dst_cell.* = src_cell.*;
+            dst_cell.hyperlink = false;
+            dst_cell.style_id = stylepkg.default_id;
+            switch (dst_cell.content_tag) {
+                .codepoint_grapheme => dst_cell.content_tag = .codepoint,
+                .codepoint, .bg_color_palette, .bg_color_rgb => {},
+            }
+            if (comptime build_options.kitty_graphics) {
+                if (src_cell.codepoint() == kitty.graphics.unicode.placeholder) {
+                    dst_row.kitty_virtual_placeholder = true;
+                }
+            }
+        }
+
+        if (self.size.cols > other.size.cols and x_end >= other.size.cols and other.size.cols > x_start) {
+            const last = &cells[other.size.cols - 1 - x_start];
+            if (last.wide == .spacer_head) {
+                last.wide = .narrow;
+            }
+        }
+    }
+
     /// Get a single row. y must be valid.
     pub inline fn getRow(self: *const Page, y: usize) *Row {
         assert(y < self.size.rows);

@@ -528,7 +528,9 @@ pub const Presenter = struct {
             0,
         );
 
-        _ = self.swap_chain.vtable.Present(self.swap_chain, if (vsync) 1 else 0, 0);
+        if (self.swap_chain.vtable.Present(self.swap_chain, if (vsync) 1 else 0, 0) < 0) {
+            return error.DxgiPresentFailed;
+        }
     }
 };
 

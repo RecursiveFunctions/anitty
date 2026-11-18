@@ -5939,8 +5939,17 @@ fn cloneRowGrowCapacity(
                 error.OutOfMemory,
                 => @panic("increaseCapacity system allocator OOM"),
 
-                error.OutOfSpace,
-                => @panic("increaseCapacity OutOfSpace"),
+                error.OutOfSpace => {
+                    log.warn("cloneRowGrowCapacity OutOfSpace, discarding row managed memory", .{});
+                    const fallback_page = current.page();
+                    const fallback_rows = fallback_page.rows.ptr(fallback_page.memory.ptr);
+                    fallback_page.cloneRowFromWithoutManagedMemory(
+                        src_page,
+                        &fallback_rows[dst_y],
+                        src_row,
+                    );
+                    return current;
+                },
             };
 
             // Retry the row copy with the increased capacity.
@@ -22631,6 +22640,53 @@ test "PageList grow requests trimmed page usage per row" {
     const used = page.usage().string_bytes.used;
     const need = s.utilizationCapacity(node);
     try testing.expectEqual(headroom(used * standard.rows / rows), need.string_bytes);
+}
+
+test "PageList: eraseRow falls back when destination page hits OutOfSpace" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s = try init(alloc, .{ .cols = 10, .rows = 4 });
+    defer s.deinit();
+
+    var src_page = try Page.init(.{
+        .cols = 10,
+        .rows = 2,
+        .styles = 16,
+        .grapheme_bytes = 512,
+    });
+    defer src_page.deinit();
+    src_page.size.rows = 2;
+
+    const src_rac = src_page.getRowAndCell(0, 0);
+    src_rac.row.blank = false;
+    src_rac.cell.* = .init('Z');
+    const cps = [_]u21{0x0301};
+    try src_page.setGraphemes(src_rac.row, src_rac.cell, &cps);
+
+    var dst_node = s.pages.last.?;
+    while (s.increaseCapacity(dst_node, .grapheme_bytes)) |next_node| {
+        dst_node = next_node;
+    } else |err| {
+        try testing.expectEqual(error.OutOfSpace, err);
+    }
+
+    const dst_page = dst_node.page();
+    const rem = dst_page.grapheme_alloc.capacityBytes() - dst_page.grapheme_alloc.usedBytes(dst_page.memory);
+    if (rem >= @sizeOf(u21)) {
+        _ = try dst_page.grapheme_alloc.alloc(u21, dst_page.memory, rem / @sizeOf(u21));
+    }
+
+    const res_node = s.cloneRowGrowCapacity(
+        dst_node,
+        0,
+        &src_page,
+        src_rac.row,
+    );
+    try testing.expectEqual(dst_node, res_node);
+    const copied_cell = res_node.page().getRowAndCell(0, 0).cell;
+    try testing.expectEqual(@as(u21, 'Z'), copied_cell.codepoint());
+    try testing.expect(!copied_cell.hasGrapheme());
 }
 
 test "PageList grow shrinks a mostly unused capacity to its headroom" {

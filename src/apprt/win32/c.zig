@@ -356,6 +356,8 @@ pub const RRF_RT_REG_SZ: DWORD = 0x00000002;
 pub const RRF_RT_REG_DWORD: DWORD = 0x00000010;
 
 pub const WM_SETTINGCHANGE: UINT = 0x001A;
+pub const WM_DISPLAYCHANGE: UINT = 0x007E;
+pub const SPI_SETWORKAREA: UINT = 0x002F;
 
 pub const GWL_STYLE: c_int = -16;
 pub const WS_POPUP: DWORD = 0x80000000;
@@ -891,4 +893,21 @@ pub fn trackMouseLeave(hwnd: ?HWND, tracking: *bool) void {
     if (tracking.*) return;
     var tme: TRACKMOUSEEVENT = .{ .dwFlags = TME_LEAVE, .hwndTrack = hwnd };
     if (TrackMouseEvent(&tme).toBool()) tracking.* = true;
+}
+
+pub fn handleCtlColorEdit(
+    hdc: HDC,
+    text_color: COLORREF,
+    bg_color: COLORREF,
+    brush_slot: *?HBRUSH,
+) LRESULT {
+    _ = SetTextColor(hdc, text_color);
+    _ = SetBkColor(hdc, bg_color);
+    if (brush_slot.*) |b| _ = DeleteObject(b);
+    brush_slot.* = CreateSolidBrush(bg_color);
+    return @bitCast(@intFromPtr(brush_slot.*));
+}
+
+pub fn isSuppressedEditChar(wparam: WPARAM) bool {
+    return wparam == VK_RETURN or wparam == VK_ESCAPE;
 }

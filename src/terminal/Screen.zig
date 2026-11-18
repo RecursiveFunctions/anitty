@@ -803,8 +803,19 @@ pub fn clonePartialRowGrowCapacity(
                 error.OutOfMemory,
                 => @panic("increaseCapacity system allocator OOM"),
 
-                error.OutOfSpace,
-                => @panic("increaseCapacity OutOfSpace"),
+                error.OutOfSpace => {
+                    log.warn("clonePartialRowGrowCapacity OutOfSpace, discarding row managed memory", .{});
+                    const fallback_page: *Page = current.page();
+                    const fallback_rows = fallback_page.rows.ptr(fallback_page.memory.ptr);
+                    fallback_page.clonePartialRowFromWithoutManagedMemory(
+                        src_page,
+                        &fallback_rows[dst_y],
+                        src_row,
+                        x_start,
+                        x_end,
+                    );
+                    return current;
+                },
             };
 
             continue;
@@ -2114,6 +2125,7 @@ pub inline fn resize(
     // modify its X/Y for reflow. Do this before changing any state since
     // tracking the pin can fail.
     const saved_cursor_pin: ?*Pin = saved_cursor: {
+        if (!opts.reflow or self.no_scrollback) break :saved_cursor null;
         const sc = self.saved_cursor orelse break :saved_cursor null;
         const pin = self.pages.pin(.{ .active = .{
             .x = sc.x,
@@ -2872,9 +2884,7 @@ pub fn cursorSetHyperlink(self: *Screen) PageList.IncreaseCapacityError!void {
                     page.memory,
                     link.uri.len,
                 )) |slice| {
-                    // We don't bother freeing because we're
-                    // about to free the entire page anyway.
-                    _ = slice;
+                    page.string_alloc.free(page.memory, slice);
                     break;
                 } else |_| {}
 
@@ -12933,6 +12943,84 @@ test "Screen: scrollClear cursor page pruned keeps per-page style id" {
         const cell_style = list_cell.style();
         try testing.expect(cell_style.flags.bold);
     }
+}
+
+test "Screen: resize alternate screen preserves saved cursor across shrink and expand" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var s = try init(io, alloc, .{ .cols = 80, .rows = 24, .max_scrollback_bytes = 0 });
+    defer s.deinit();
+
+    s.cursorAbsolute(50, 20);
+    s.saved_cursor = .{
+        .x = 50,
+        .y = 20,
+        .style = .{},
+        .pending_wrap = false,
+        .origin = false,
+        .protected = false,
+        .charset = .{},
+    };
+
+    try s.resize(.{ .cols = 40, .rows = 10, .reflow = true });
+    try testing.expectEqual(@as(size.CellCountInt, 50), s.saved_cursor.?.x);
+    try testing.expectEqual(@as(size.CellCountInt, 20), s.saved_cursor.?.y);
+
+    try s.resize(.{ .cols = 80, .rows = 24, .reflow = true });
+    try testing.expectEqual(@as(size.CellCountInt, 50), s.saved_cursor.?.x);
+    try testing.expectEqual(@as(size.CellCountInt, 20), s.saved_cursor.?.y);
+}
+
+test "Screen: clonePartialRowGrowCapacity falls back when destination page hits OutOfSpace" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var s = try init(io, alloc, .{ .cols = 10, .rows = 4, .max_scrollback_bytes = 1024 * 1024 });
+    defer s.deinit();
+
+    var src_page = try Page.init(.{
+        .cols = 10,
+        .rows = 2,
+        .styles = 16,
+        .grapheme_bytes = 512,
+    });
+    defer src_page.deinit();
+    src_page.size.rows = 2;
+
+    const src_rac = src_page.getRowAndCell(0, 0);
+    src_rac.row.blank = false;
+    src_rac.cell.* = .init('A');
+    const cps = [_]u21{0x0301};
+    try src_page.setGraphemes(src_rac.row, src_rac.cell, &cps);
+
+    var dst_node = s.cursor.page_pin.node;
+    while (s.increaseCapacity(dst_node, .grapheme_bytes)) |next_node| {
+        dst_node = next_node;
+    } else |err| {
+        try testing.expectEqual(error.OutOfSpace, err);
+    }
+
+    const dst_page = dst_node.page();
+    const rem = dst_page.grapheme_alloc.capacityBytes() - dst_page.grapheme_alloc.usedBytes(dst_page.memory);
+    if (rem >= @sizeOf(u21)) {
+        _ = try dst_page.grapheme_alloc.alloc(u21, dst_page.memory, rem / @sizeOf(u21));
+    }
+
+    const res_node = s.clonePartialRowGrowCapacity(
+        dst_node,
+        0,
+        &src_page,
+        src_rac.row,
+        0,
+        5,
+    );
+    try testing.expectEqual(dst_node, res_node);
+    const copied_cell = res_node.page().getRowAndCell(0, 0).cell;
+    try testing.expectEqual(@as(u21, 'A'), copied_cell.codepoint());
+    try testing.expect(!copied_cell.hasGrapheme());
 }
 
 test "Screen: scrollClear cursor page pruned keeps per-page hyperlink id" {

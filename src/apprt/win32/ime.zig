@@ -19,6 +19,9 @@ pub const GCS_RESULTSTR: c.DWORD = 0x0800;
 pub const CFS_POINT: c.DWORD = 0x0002;
 pub const CFS_CANDIDATEPOS: c.DWORD = 0x0040;
 pub const CFS_EXCLUDE: c.DWORD = 0x0080;
+pub const NI_COMPOSITIONSTR: c.DWORD = 0x0015;
+pub const CPS_COMPLETE: c.DWORD = 0x0001;
+pub const CPS_CANCEL: c.DWORD = 0x0004;
 pub const ISC_SHOWUICOMPOSITIONWINDOW: c.LPARAM = 0x80000000;
 pub const IMN_CHANGECANDIDATE: c.WPARAM = 0x0003;
 pub const IMN_OPENCANDIDATE: c.WPARAM = 0x0005;
@@ -45,6 +48,7 @@ pub extern "imm32" fn ImmGetCompositionWindow(himc: HIMC, form: *COMPOSITIONFORM
 pub extern "imm32" fn ImmSetCandidateWindow(himc: HIMC, form: *const CANDIDATEFORM) callconv(.winapi) c.BOOL;
 pub extern "imm32" fn ImmGetCandidateWindow(himc: HIMC, index: c.DWORD, form: *CANDIDATEFORM) callconv(.winapi) c.BOOL;
 pub extern "imm32" fn ImmGetVirtualKey(hwnd: c.HWND) callconv(.winapi) c.UINT;
+pub extern "imm32" fn ImmNotifyIME(himc: HIMC, action: c.DWORD, index: c.DWORD, value: c.DWORD) callconv(.winapi) c.BOOL;
 
 pub const Caret = struct {
     x: i32,
@@ -124,6 +128,20 @@ pub const State = struct {
     composing: bool = false,
     eaten: std.StaticBitSet(256) = .empty,
     dedup: Dedup = .{},
+
+    pub fn resetComposition(self: *State, sink: anytype, hwnd: ?c.HWND) void {
+        if (self.composing) {
+            if (hwnd) |h| {
+                if (ImmGetContext(h)) |himc| {
+                    defer _ = ImmReleaseContext(h, himc);
+                    _ = ImmNotifyIME(himc, NI_COMPOSITIONSTR, CPS_COMPLETE, 0);
+                }
+            }
+            self.composing = false;
+            sink.imePreedit(null);
+        }
+        self.dedup.reset();
+    }
 
     pub fn onKey(self: *State, hwnd: c.HWND, msg: c.UINT, vk: c.UINT) bool {
         const down = msg == c.WM_KEYDOWN or msg == c.WM_SYSKEYDOWN;
@@ -282,6 +300,22 @@ test "dedup drops WM_CHAR echoing the IME result" {
     d.record(&units, 1000);
     d.reset();
     try testing.expect(!d.skip(0x65E5, 1000));
+}
+
+test "State.resetComposition clears composing, dedup, and preedit" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var sink: TestSink = .{ .alloc = alloc };
+    defer sink.deinit();
+
+    var state: State = .{ .composing = true };
+    const units = [_]u16{ 0x65E5, 0x672C };
+    state.dedup.record(&units, 1000);
+
+    state.resetComposition(&sink, null);
+    try testing.expect(!state.composing);
+    try testing.expect(!state.dedup.skip(0x65E5, 1000));
+    try sink.expect(&.{"preedit:null"});
 }
 
 const TestSink = struct {

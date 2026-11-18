@@ -141,6 +141,9 @@ pub fn createWithWorkingDirectory(
 
     try self.core_surface.init(alloc, &config, app.core_app, app, self);
     self.initialized = true;
+    self.core_surface.colorSchemeCallback(app.color_scheme) catch |err| {
+        log.warn("error in initial color scheme callback err={}", .{err});
+    };
     self.drop_target = DropTarget.register(alloc, self);
     log.debug("core surface initialized", .{});
 
@@ -422,6 +425,7 @@ fn focusChanged(self: *Surface, focused: bool) void {
         self.setBellRinging(false);
     } else {
         self.char_decoder = .{};
+        self.ime_state.resetComposition(self, self.hwnd);
         if (self.dead_key_pending) {
             self.dead_key_pending = false;
             if (self.initialized) {
@@ -852,12 +856,13 @@ fn completeClipboard(
     preview: []const u8,
 ) void {
     self.core_surface.completeClipboardRequest(req, complete) catch |err| switch (err) {
-        error.UnsafePaste, error.UnauthorizedPaste => {
+        error.UnsafePaste, error.UnsafePastePassword, error.UnauthorizedPaste => {
             const prompt: ClipboardPrompt = switch (req) {
                 .paste, .list => .paste,
                 .osc_52_read, .kitty_read => .read,
                 .osc_52_write, .kitty_write => .write,
             };
+            if (err == error.UnsafePastePassword) self.secure_input = true;
             if (!self.confirmClipboard(prompt, preview)) {
                 self.core_surface.denyClipboardRequest(req);
                 return;

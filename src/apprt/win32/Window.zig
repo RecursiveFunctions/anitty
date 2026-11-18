@@ -1845,10 +1845,22 @@ pub fn wndProc(
             self.drag = null;
         },
 
-        c.WM_SETTINGCHANGE => if (lparam != 0) {
-            const name: [*:0]const u16 = @ptrFromInt(@as(usize, @bitCast(lparam)));
-            if (std.mem.eql(u16, std.mem.span(name), L("ImmersiveColorSet"))) {
-                self.app.systemColorSchemeChanged();
+        c.WM_DISPLAYCHANGE => {
+            if (self.is_quick_terminal) {
+                self.app.quick_terminal.relayout(&self.app.config);
+            }
+            return 0;
+        },
+
+        c.WM_SETTINGCHANGE => {
+            if (wparam == c.SPI_SETWORKAREA and self.is_quick_terminal) {
+                self.app.quick_terminal.relayout(&self.app.config);
+            }
+            if (lparam != 0) {
+                const name: [*:0]const u16 = @ptrFromInt(@as(usize, @bitCast(lparam)));
+                if (std.mem.eql(u16, std.mem.span(name), L("ImmersiveColorSet"))) {
+                    self.app.systemColorSchemeChanged();
+                }
             }
         },
 

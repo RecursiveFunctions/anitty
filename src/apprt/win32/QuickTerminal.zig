@@ -93,6 +93,21 @@ pub fn show(self: *QuickTerminal, app: *App, win: *Window) void {
     }
 }
 
+pub fn relayout(self: *QuickTerminal, config: *const configpkg.Config) void {
+    if (!self.visible) return;
+    const win = self.window orelse return;
+    const hwnd = win.hwnd orelse return;
+    const work = monitorWorkAreaForWindow(hwnd, config);
+    self.rects = computeRects(
+        config.@"quick-terminal-position",
+        config.@"quick-terminal-size",
+        work,
+    );
+    if (!self.animating) {
+        applyRect(hwnd, self.rects.target, true);
+    }
+}
+
 pub fn hide(self: *QuickTerminal, app: *App) void {
     if (!self.visible) return;
     self.visible = false;
@@ -173,6 +188,14 @@ fn applyRect(hwnd: c.HWND, r: c.RECT, top_most: bool) void {
         r.bottom - r.top,
         if (top_most) c.SWP_NOACTIVATE else c.SWP_NOZORDER | c.SWP_NOACTIVATE,
     );
+}
+
+fn monitorWorkAreaForWindow(hwnd: c.HWND, config: *const configpkg.Config) c.RECT {
+    if (c.MonitorFromWindow(hwnd, c.MONITOR_DEFAULTTONEAREST)) |m| {
+        var info: c.MONITORINFO = .{};
+        if (c.GetMonitorInfoW(m, &info).toBool()) return info.rcWork;
+    }
+    return targetWorkArea(config);
 }
 
 fn targetWorkArea(config: *const configpkg.Config) c.RECT {

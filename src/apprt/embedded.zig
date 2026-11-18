@@ -916,6 +916,7 @@ pub const Surface = struct {
             .remember = complete.remember,
         }) catch |err| switch (err) {
             error.UnsafePaste,
+            error.UnsafePastePassword,
             error.UnauthorizedPaste,
             => {
                 // Session grant information for the permission prompt,

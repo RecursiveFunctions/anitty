@@ -459,10 +459,18 @@ pub const Context = struct {
                 const readPixels: ReadPixelsFn = @ptrCast(proc);
                 presenter.presentFromGL(width, height, self.vsync, readPixels) catch |err| {
                     log.warn("D3D11 present failed err={}, falling back to WGL SwapBuffers", .{err});
+                    presenter.deinit();
+                    self.d3d11 = null;
+                    self.present_mode = if (self.vsync) .swap_interval else .dwm_flush;
                     if (!SwapBuffers(self.hdc).toBool()) return error.WglSwapBuffersFailed;
+                    if (self.present_mode == .dwm_flush) _ = DwmFlush();
                 };
             } else {
+                presenter.deinit();
+                self.d3d11 = null;
+                self.present_mode = if (self.vsync) .swap_interval else .dwm_flush;
                 if (!SwapBuffers(self.hdc).toBool()) return error.WglSwapBuffersFailed;
+                if (self.present_mode == .dwm_flush) _ = DwmFlush();
             }
         } else {
             if (!SwapBuffers(self.hdc).toBool()) return error.WglSwapBuffersFailed;

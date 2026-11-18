@@ -6372,7 +6372,10 @@ fn completeClipboardPaste(
 
         if (unsafe) {
             log.info("potentially unsafe paste detected, rejecting until confirmation", .{});
-            return error.UnsafePaste;
+            return if (self.io.terminal.flags.password_input)
+                error.UnsafePastePassword
+            else
+                error.UnsafePaste;
         }
 
         // With the lock held, we must scroll to the bottom.

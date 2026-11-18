@@ -11,6 +11,8 @@
     <br />
     <a href="https://github.com/RecursiveFunctions/anitty/releases">Releases</a>
     ·
+    <a href="#recent-changes">Recent Changes</a>
+    ·
     <a href="#installation">Installation</a>
     ·
     <a href="#configuration">Configuration</a>
@@ -19,9 +21,24 @@
     ·
     <a href="#building">Building</a>
     ·
+    <a href="CHANGELOG.md">Changelog</a>
+    ·
     <a href="dist/windows/README-windows.md">Windows Notes & Known Issues</a>
   </p>
 </p>
+
+## Recent Changes
+
+Unreleased tip (`8f6f91bac`, `3a7ab0383`) — Discord/upstream bugfixes after `3fb0cc4dd`:
+
+- Clear stuck right-click / context-menu mouse state so tmux and other mouse-mode apps stop seeing a held right button.
+- Command Palette and Tab Overview no longer stack; overlays refresh or close when tabs and surfaces change; UI chrome follows OSC 10/11 colors.
+- `window-width` / `window-height` account for the tab bar on first launch and when only one dimension is set.
+- OpenGL frame export is top-row-first; color emoji alpha blending fixed (OpenGL + Metal).
+- HarfBuzz no longer blanks a whole row when a fallback face fails to load; scrollback search pruning is much cheaper on large match sets.
+- libghostty-vt snapshots keep `pending_wrap` and `semantic_prompt` correct under `DECSLRM` left/right margins.
+
+Full history: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Installation
 
